@@ -1,0 +1,1280 @@
+*&------------------------------------------------------------------------*
+*& Include ZI_TR_FX_SNAPSHOT_COMP_CLS
+*&------------------------------------------------------------------------*
+*& Program Name           : ZI_TR_FX_SNAPSHOT_COMP_CLS
+*& Description            : FX Snapshot Comparison Report Class Include
+*& Developer              : Normie Angeles (197089634349)
+*& Creation Date          : 10/11/2025
+*& Charm ID               :
+*& Transport Request No   : S0DK940315
+*&------------------------------------------------------------------------*
+*& Modification History
+*&------------------------------------------------------------------------*
+*& Date        Charm ID     Developer     Transport     Description                           *
+*& 08/31/2026               465794779093  FSFXBAM-601   Added Checkbox p_fixdtl(Fica Document *
+*&                                                      Level Detailed Report                 *
+*&                                                                                            *
+*&                                                      Replaced paramm p_model into          *
+*&                                                      select-options s_model (no intervals) *
+*&                                                      and added BHFS Validation             *
+*&                                                                                            *
+*&                                                      Added Fica Doc no. to Detailed ALV    *
+*&                                                                                            *
+*&                                                      Detail ALV aggregates to FIGL-item    *
+*&                                                      grain when checkbox unchecked         *
+*&------------------------------------------------------------------------*
+*--------------------------------------------------------------------------*
+*       CLASS lcl_main DEFINITION
+*--------------------------------------------------------------------------*
+CLASS lcl_main DEFINITION FINAL.
+  PUBLIC SECTION.
+    TYPES:
+      tyt_stage         TYPE STANDARD TABLE OF ztr_fx_snapshot
+                        WITH KEY bukrs gjahr belnr docln timestamp,
+      tyt_exposure_curr TYPE STANDARD TABLE OF ty_exposure_curr
+                        WITH EMPTY KEY,
+      tyt_category      TYPE STANDARD TABLE OF ty_category
+                        WITH EMPTY KEY,
+*BOD of JIRA: FSFXBAM-348
+*      tyt_agency        TYPE STANDARD TABLE OF ty_agency
+*                        WITH EMPTY KEY,
+*      tyt_merchant      TYPE STANDARD TABLE OF ty_merchant
+*                        WITH EMPTY KEY,
+*EOD of JIRA: FSFXBAM-348
+      tyt_alv           TYPE STANDARD TABLE OF ty_alv
+                        WITH EMPTY KEY,
+      tyt_maintrans     TYPE STANDARD TABLE OF tfkhvot
+                        WITH KEY spras applk hvorg,
+      tyt_subtrans      TYPE STANDARD TABLE OF tfktvot
+                        WITH KEY spras applk hvorg tvorg,
+      tyt_fxm_snap      TYPE STANDARD TABLE OF fxm_snap
+                        WITH KEY snap_id,
+      tyt_blart_text    TYPE STANDARD TABLE OF tfk003t
+                        WITH KEY spras applk blart,
+      tyt_snapcat       TYPE STANDARD TABLE OF ztr_fx_snapcat
+                        WITH KEY counter model,
+      tyt_bhfs          TYPE STANDARD TABLE OF tvarvc  "(+) of JIRA: FSFXBAM-601
+                        WITH EMPTY KEY.                "(+) of JIRA: FSFXBAM-601
+
+    DATA:
+      gv_snap_desc TYPE fxm_snap_description,
+      gt_fxm_snap  TYPE tyt_fxm_snap.
+
+    CONSTANTS:
+      gc_e(1)      TYPE c                        VALUE 'E',
+      gc_p(1)      TYPE c                        VALUE 'P',
+      gc_s(1)      TYPE c                        VALUE 'S',
+      gc_tzone(6)  TYPE c                        VALUE 'UTC',
+      gc_en        TYPE spras                    VALUE 'E',
+      gc_snap_desc TYPE rvari_vnam               VALUE 'ZTR_FX_SNAPSHOT_JOB_DESC',
+      gc_bhfs      TYPE rvari_vnam               VALUE 'ZTR_FX_SNAPSHOT_STREAM', "(+) of JIRA: FSFXBAM-601 - TVARVC BHFS company codes
+      gc_memo      TYPE zde_fx_snapshot_category VALUE 'MEMO'.
+
+    METHODS:
+      constructor,
+      auth,
+      snap_id,
+      f4_snap_id
+        IMPORTING iv_snap TYPE dynfnam,
+      validate_selection,
+      run,
+      on_main_click
+        FOR EVENT link_click OF cl_salv_events_table
+        IMPORTING row column,
+      on_sub_click
+        FOR EVENT link_click OF cl_salv_events_table
+        IMPORTING row column.
+
+  PRIVATE SECTION.
+    CLASS-DATA:
+      gv_cc_cur        TYPE waers,
+      gs_snapfrom      TYPE ty_snap,
+      gs_snapto        TYPE ty_snap,
+      gt_stage         TYPE tyt_stage,
+      gt_exposure_curr TYPE tyt_exposure_curr,
+      gt_category      TYPE tyt_category,
+      gt_cc_convert    TYPE tyt_category,
+*BOD of JIRA: FSFXBAM-348
+*      gt_agency         TYPE tyt_agency,
+*      gt_merchant       TYPE tyt_merchant,
+*EOD of JIRA: FSFXBAM-348
+      gt_main_dtl      TYPE tyt_stage,
+      gt_main_dtl_alv  TYPE tyt_alv,
+      gt_maintrans     TYPE tyt_maintrans,
+      gt_subtrans      TYPE tyt_subtrans,
+      gt_blart_text    TYPE tyt_blart_text,
+      gt_snapcat       TYPE tyt_snapcat,
+      gt_comp          TYPE cl_abap_structdescr=>component_table, "(+) of JIRA: FSFXBAM-348
+      gt_bhfs          TYPE tyt_bhfs.                             "(+) of JIRA: FSFXBAM-601
+
+    CLASS-METHODS get_snapshot
+      IMPORTING
+                iv_snapid      TYPE fxm_snap_id
+      RETURNING VALUE(is_snap) TYPE ty_snap.
+    CLASS-METHODS get_data.
+    CLASS-METHODS aggregate.
+*BOD of JIRA: FSFXBAM-348
+*    CLASS-METHODS build_tab.
+*    CLASS-METHODS display_alv.
+*EOD of JIRA: FSFXBAM-348
+    CLASS-METHODS process_memo.
+    CLASS-METHODS aggregate_main_dtl_alv.
+    CLASS-METHODS build_main_dtl_alv.
+    CLASS-METHODS display_main_dtl_alv.
+    CLASS-METHODS get_total
+      IMPORTING
+                iv_curr       TYPE fins_currw
+*BOC of JIRA: FSFXBAM-348
+*        iv_cat  TYPE zde_fx_snapshot_category
+                iv_cat        TYPE seqnr
+*EOC of JIRA: FSFXBAM-348
+                iv_model      TYPE zde_model  "(+) of JIRA: FSFXBAM-601
+      RETURNING VALUE(rv_tot) TYPE fins_vwcur12.
+    CLASS-METHODS convert_to_cc
+      IMPORTING
+                iv_curr       TYPE fins_currw
+*BOC of JIRA: FSFXBAM-348
+*        iv_cat  TYPE zde_fx_snapshot_category
+                iv_cat        TYPE seqnr
+*EOC of JIRA: FSFXBAM-348
+                iv_model      TYPE zde_model  "(+) of JIRA: FSFXBAM-601
+      RETURNING VALUE(rv_tot) TYPE fins_vhcur12.
+    CLASS-METHODS get_main_dtl
+      IMPORTING
+                iv_curr         TYPE rtcur
+                iv_cat          TYPE zde_fx_snapshot_category
+                iv_model        TYPE zde_model OPTIONAL "(+) of JIRA: FSFXBAM-601
+      RETURNING VALUE(rt_stage) TYPE tyt_stage.
+*BOC of JIRA: FSFXBAM-348
+    CLASS-METHODS build_categories.
+    CLASS-METHODS build_structure.
+    CLASS-METHODS build_table.
+    CLASS-METHODS fill_table.
+    CLASS-METHODS build_alv.
+*EOC of JIRA: FSFXBAM-348
+ENDCLASS.
+*--------------------------------------------------------------------------*
+*       CLASS lcl_main IMPLEMENTATION
+*--------------------------------------------------------------------------*
+CLASS lcl_main IMPLEMENTATION.
+
+  METHOD constructor.
+    SELECT *
+      FROM tfkhvot
+      WHERE spras = @gc_en
+      INTO TABLE @gt_maintrans.
+
+    SELECT *
+      FROM tfktvot
+      WHERE spras = @gc_en
+      INTO TABLE @gt_subtrans.
+
+    SELECT SINGLE low
+        FROM tvarvc
+        WHERE name = @gc_snap_desc
+          AND type = @gc_p
+        INTO @gv_snap_desc.
+
+    SELECT *
+      FROM tfk003t
+      WHERE spras = @gc_en
+      INTO TABLE @gt_blart_text.
+*BODof JIRA: FSFXBAM-348
+*    SELECT *
+*      FROM ztr_fx_snapcat
+*      WHERE model IS NOT INITIAL
+*      INTO TABLE @gt_snapcat.  "#EC CI_ALL_FIELDS_NEEDED
+*EOD of JIRA: FSFXBAM-348
+
+*BOD of JIRA: FSFXBAM-601
+    SELECT *
+      FROM tvarvc
+      WHERE name = @gc_bhfs
+      AND type = @gc_s
+      INTO TABLE @gt_bhfs.
+*EOD of JIRA: FSFXBAM-601
+  ENDMETHOD.
+
+  METHOD auth.
+
+    " Authorization Check for Company Code access.
+    SELECT companycode AS bukrs
+    FROM i_companycode
+    WHERE companycode IN @s_bukrs[]
+    INTO TABLE @DATA(lt_bukrs).
+
+    LOOP AT lt_bukrs ASSIGNING FIELD-SYMBOL(<lfs_bukrs>).
+      AUTHORITY-CHECK OBJECT 'F_BKPF_BUK'
+                      ID 'BUKRS' FIELD <lfs_bukrs>-bukrs
+                      ID 'ACTVT' FIELD '03'.
+
+      IF sy-subrc <> 0.
+        MESSAGE TEXT-e05 && <lfs_bukrs>-bukrs TYPE gc_e.
+      ENDIF.
+    ENDLOOP.
+
+  ENDMETHOD.
+
+  METHOD snap_id.
+    IF p_snapfr IS  INITIAL
+      AND p_snapto IS INITIAL.
+
+      SELECT *
+        FROM fxm_snap
+        WHERE description = @gv_snap_desc
+        ORDER BY create_timestamp DESCENDING
+      INTO TABLE @gt_fxm_snap.                "#EC CI_ALL_FIELDS_NEEDED
+      IF sy-subrc = 0.
+        p_snapfr = VALUE #( gt_fxm_snap[ 2 ]-snap_id OPTIONAL ).
+
+        p_snapto = VALUE #( gt_fxm_snap[ 1 ]-snap_id OPTIONAL ).
+      ENDIF.
+    ENDIF.
+  ENDMETHOD.
+
+  METHOD f4_snap_id.
+    TYPES: BEGIN OF ty_snap_help,
+             snap_id     TYPE fxm_snap_id,
+             keydate     TYPE fxm_key_date,
+             create_user TYPE rerf,
+             create_date TYPE fxm_create_date,
+             create_time TYPE fxm_create_time,
+             description TYPE fxm_snap_description,
+           END OF ty_snap_help.
+
+    DATA: lt_snap_help TYPE STANDARD TABLE OF ty_snap_help.
+
+    LOOP AT gt_fxm_snap INTO DATA(x).
+      CONVERT TIME STAMP x-create_timestamp TIME ZONE sy-zonlo
+              INTO DATE DATA(lv_date) TIME DATA(lv_time).
+
+      APPEND VALUE #(
+        snap_id     = x-snap_id
+        keydate     = x-keydate
+        create_user = x-create_user
+        create_date = lv_date
+        create_time = lv_time
+        description = x-description
+      ) TO lt_snap_help.
+    ENDLOOP.
+
+    CHECK lt_snap_help IS NOT INITIAL.
+    CALL FUNCTION 'F4IF_INT_TABLE_VALUE_REQUEST'
+      EXPORTING
+        retfield        = 'SNAP_ID'
+        dynpprog        = sy-repid
+        dynpnr          = sy-dynnr
+        dynprofield     = iv_snap
+        value_org       = 'S'
+      TABLES
+        value_tab       = lt_snap_help
+      EXCEPTIONS
+        parameter_error = 1
+        no_values_found = 2
+        OTHERS          = 3 ##FM_SUBRC_OK.
+  ENDMETHOD.
+
+  METHOD validate_selection.
+    gs_snapfrom = get_snapshot( iv_snapid = p_snapfr ).
+    gs_snapto   = get_snapshot( iv_snapid = p_snapto ).
+
+    " Read snapshots from FXM_SNAP
+    IF gs_snapfrom-snap_id IS INITIAL OR gs_snapto-snap_id IS INITIAL.
+      MESSAGE TEXT-e01 TYPE gc_e DISPLAY LIKE gc_s.
+    ENDIF.
+
+    " KEYDATE difference not more than 10 days
+    DATA(lv_diff) = gs_snapto-keydate - gs_snapfrom-keydate.
+    IF lv_diff < 0.
+      lv_diff = lv_diff * -1.
+    ENDIF.
+
+    IF lv_diff > 10.
+      MESSAGE TEXT-e02 TYPE gc_e DISPLAY LIKE gc_s.
+    ENDIF.
+
+    " CREATE_TIMESTAMP(from) <= CREATE_TIMESTAMP(to)
+    IF gs_snapfrom-create_timestamp > gs_snapto-create_timestamp.
+      MESSAGE TEXT-e03 TYPE gc_e DISPLAY LIKE gc_s.
+    ENDIF.
+
+    SELECT DISTINCT waers
+      FROM t001
+      WHERE bukrs IN @s_bukrs
+    INTO TABLE @DATA(lt_waers).
+    IF sy-subrc = 0.
+      DATA(lv_count) = lines( lt_waers ).
+      IF lv_count > 1.
+        MESSAGE TEXT-e06 TYPE gc_e DISPLAY LIKE gc_s.
+      ELSE.
+        gv_cc_cur = VALUE #( lt_waers[ 1 ]-waers OPTIONAL ).
+      ENDIF.
+    ENDIF.
+
+*BOC of JIRA: FSFXBAM-601
+    IF lines( s_model ) > 1.
+      SELECT companycode FROM i_companycode
+       WHERE companycode IN   @s_bukrs
+        INTO TABLE @DATA(lt_bukrs).
+
+      "Check if company codes have non bhfs-codes
+      IF sy-subrc = 0.
+        LOOP AT lt_bukrs ASSIGNING FIELD-SYMBOL(<ls_cc>).
+          IF NOT line_exists( gt_bhfs[ low = <ls_cc>-companycode ] ).
+            MESSAGE TEXT-e07 TYPE gc_e DISPLAY LIKE gc_s.
+            EXIT.
+          ENDIF.
+        ENDLOOP.
+      ENDIF.
+    ENDIF.
+*EOC of JIRA: FSFXBAM-601
+  ENDMETHOD.
+
+  METHOD run.
+    get_data( ).
+    aggregate( ).
+*BOC of JIRA: FSFXBAM-348
+    build_categories( ).
+    build_structure( ).
+    build_table( ).
+    fill_table( ).
+    build_alv( ).
+*    build_tab( ).
+*    display_alv( ).
+*EOC of JIRA: FSFXBAM-348
+  ENDMETHOD.
+
+  METHOD get_snapshot.
+    SELECT SINGLE
+      snap_id,
+      keydate,
+      create_timestamp
+    FROM fxm_snap
+    INTO @is_snap
+    WHERE snap_id = @iv_snapid.
+  ENDMETHOD.
+
+  METHOD get_data.
+    FREE gt_stage.
+
+    SELECT *
+      FROM ztr_fx_snapshot
+      WHERE ( ( avdat IS NOT INITIAL AND avdat >= @gs_snapfrom-keydate )
+         OR ( avdat IS INITIAL ) )
+        AND ( ( timestamp    BETWEEN @gs_snapfrom-create_timestamp
+                             AND @gs_snapto-create_timestamp   )
+        OR ( timestamp   <= @gs_snapfrom-create_timestamp
+        AND budat        > @gs_snapfrom-keydate ) )
+        AND budat        <= @gs_snapto-keydate
+*        AND model        = @p_model              "(-) of JIRA: FSFXBAM-601, replaced to s_model
+        AND model        IN @s_model              "(+) of JIRA: FSFXBAM-601
+        AND bukrs        IN @s_bukrs
+      INTO TABLE @gt_stage.
+
+    IF gt_stage IS NOT INITIAL.
+      " Exception logic for MEMO records
+*      process_memo( ).
+    ELSE.
+      MESSAGE TEXT-e04 TYPE gc_s DISPLAY LIKE gc_e.
+    ENDIF.
+  ENDMETHOD.
+
+  METHOD process_memo.
+    DATA: ls_memo TYPE ztr_fx_snapshot,
+          lt_memo TYPE tyt_stage.
+
+    SELECT *
+      FROM ztr_fx_snapshot
+      WHERE budat    = @gs_snapfrom-keydate
+        AND cert_lvl = @gc_memo
+*BOC of JIRA: FSFXBAM-348
+*       AND model    = @p_model           "(-) of JIRA: FSFXBAM-601
+        AND model    IN @s_model          "(+) of JIRA: FSFXBAM-601
+        AND bukrs    IN @s_bukrs
+*EOC of JIRA: FSFXBAM-348
+      INTO TABLE @DATA(lt_memo_tmp).
+    IF lt_memo_tmp IS NOT INITIAL.
+      LOOP AT lt_memo_tmp ASSIGNING FIELD-SYMBOL(<memo>).
+        ls_memo = VALUE #( gt_stage[ bukrs    = <memo>-bukrs
+                                     racct    = <memo>-racct
+                                     plan_lvl = <memo>-plan_lvl
+                                     rtcur    = <memo>-rtcur ] OPTIONAL ). "#EC CI_STDSEQ
+        IF ls_memo IS INITIAL.
+          IF <memo>-model = 1 AND <memo>-category = '006'.
+            <memo>-tsl = <memo>-tsl * - 1.
+            <memo>-hsl = <memo>-hsl * - 1.
+            lt_memo = VALUE #( BASE lt_memo ( <memo> ) ).
+          ENDIF.
+        ELSE.
+          <memo>-tsl = <memo>-tsl * - 1.
+          <memo>-hsl = <memo>-hsl * - 1.
+          lt_memo = VALUE #( BASE lt_memo ( <memo> ) ).
+        ENDIF.
+      ENDLOOP.
+
+      CLEAR gt_stage.
+
+      IF lt_memo IS NOT INITIAL.
+        gt_stage = VALUE #( BASE gt_stage
+                            FOR memo IN lt_memo
+                                    ( memo ) ).
+      ENDIF.
+    ENDIF.
+  ENDMETHOD.
+
+  METHOD aggregate.
+    SORT gt_stage BY rtcur.
+    gt_exposure_curr = VALUE #( FOR GROUPS s OF stage IN gt_stage
+                                GROUP BY stage-rtcur
+                                ( exposure_curr = s
+                                  tot_amt       = REDUCE fins_vwcur12( INIT sum = CONV fins_vwcur12( 0 )
+                                                                       FOR x IN GROUP s
+                                                                       NEXT sum = sum + x-tsl )
+                                  tot_cc_amt    = REDUCE fins_vhcur12( INIT sum = CONV fins_vhcur12( 0 )
+                                                                       FOR x IN GROUP s
+                                                                       NEXT sum = sum + x-hsl ) ) ).
+
+    SORT gt_stage BY model rtcur category.
+    gt_category = VALUE #( FOR GROUPS c OF category IN gt_stage
+                           GROUP BY ( rtcur    = category-rtcur
+                                      category = category-category
+                                      model    = category-model )  "(+) of JIRA: FSFXBAM-601
+                           ( exposure_curr = c-rtcur
+                             category      = c-category
+                             model         = c-model               "(+) of JIRA: FSFXBAM-601
+                             tot_amt       = REDUCE fins_vwcur12( INIT sum = CONV fins_vwcur12( 0 )
+                                                                  FOR y IN GROUP c
+                                                                  NEXT sum = sum + y-tsl ) ) ).
+
+    gt_cc_convert = VALUE #( FOR GROUPS d OF category IN gt_stage
+                             GROUP BY ( rtcur = category-rtcur
+                                        category = category-category
+                                        model    = category-model )  "(+) of JIRA: FSFXBAM-601
+                           ( exposure_curr = d-rtcur
+                             category      = d-category
+                             model         = d-model                 "(+) of JIRA: FSFXBAM-601
+                             tot_amt       = REDUCE fins_vhcur12( INIT sum = CONV fins_vhcur12( 0 )
+                                                                               FOR z IN GROUP d
+                                                                               NEXT sum = sum + z-hsl ) ) ).
+
+  ENDMETHOD.
+*BOD of JIRA: FSFXBAM-348
+*  METHOD build_tab.
+*    CASE p_model.
+*      WHEN '1'.
+*       LOOP AT gt_exposure_curr ASSIGNING FIELD-SYMBOL(<a>).
+*
+*         APPEND VALUE #(
+*            exposure_curr         = <a>-exposure_curr
+*            tot_movement          = <a>-tot_amt
+*            tot_wht               = get_total( iv_curr = <a>-exposure_curr iv_cat = '001' )
+*            tot_dividends         = get_total( iv_curr = <a>-exposure_curr iv_cat = '002' )
+*            tot_service_fees      = get_total( iv_curr = <a>-exposure_curr iv_cat = '003' )
+*            tot_comm_netting      = get_total( iv_curr = <a>-exposure_curr iv_cat = '004' )
+*            tot_spot_trades       = get_total( iv_curr = <a>-exposure_curr iv_cat = '005' )
+*            tot_psp               = get_total( iv_curr = <a>-exposure_curr iv_cat = '006' )
+*            tot_tbi               = get_total( iv_curr = <a>-exposure_curr iv_cat = '007' )
+*            tot_pbb_netting       = get_total( iv_curr = <a>-exposure_curr iv_cat = '008' )
+*            tot_dst               = get_total( iv_curr = <a>-exposure_curr iv_cat = '009' )
+*            tot_sbc               = get_total( iv_curr = <a>-exposure_curr iv_cat = '010' )
+*            tot_brl               = get_total( iv_curr = <a>-exposure_curr iv_cat = '011' )
+*            tot_memo              = get_total( iv_curr = <a>-exposure_curr iv_cat = '012' )
+*            tot_fica_invoices     = get_total( iv_curr = <a>-exposure_curr iv_cat = '013' )
+*            tot_fica_data         = get_total( iv_curr = <a>-exposure_curr iv_cat = '014' )
+*            tot_unalloc           = get_total( iv_curr = <a>-exposure_curr iv_cat = '000' )
+*            tot_movement_cc       = <a>-tot_cc_amt
+*            tot_wht_cc            = convert_to_cc( iv_curr = <a>-exposure_curr iv_cat = '001' )
+*            tot_dividends_cc      = convert_to_cc( iv_curr = <a>-exposure_curr iv_cat = '002' )
+*            tot_service_fees_cc   = convert_to_cc( iv_curr = <a>-exposure_curr iv_cat = '003' )
+*            tot_comm_netting_cc   = convert_to_cc( iv_curr = <a>-exposure_curr iv_cat = '004' )
+*            tot_spot_trades_cc    = convert_to_cc( iv_curr = <a>-exposure_curr iv_cat = '005' )
+*            tot_psp_cc            = convert_to_cc( iv_curr = <a>-exposure_curr iv_cat = '006' )
+*            tot_tbi_cc            = convert_to_cc( iv_curr = <a>-exposure_curr iv_cat = '007' )
+*            tot_pbb_netting_cc    = convert_to_cc( iv_curr = <a>-exposure_curr iv_cat = '008' )
+*            tot_dst_cc            = convert_to_cc( iv_curr = <a>-exposure_curr iv_cat = '009' )
+*            tot_sbc_cc            = convert_to_cc( iv_curr = <a>-exposure_curr iv_cat = '010' )
+*            tot_brl_cc            = convert_to_cc( iv_curr = <a>-exposure_curr iv_cat = '011' )
+*            tot_memo_cc           = convert_to_cc( iv_curr = <a>-exposure_curr iv_cat = '012' )
+*            tot_fica_invoices_cc  = convert_to_cc( iv_curr = <a>-exposure_curr iv_cat = '013' )
+*            tot_fica_data_cc      = convert_to_cc( iv_curr = <a>-exposure_curr iv_cat = '014' )
+*            tot_unalloc_cc        = convert_to_cc( iv_curr = <a>-exposure_curr iv_cat = '000' )
+*         ) TO gt_agency.
+*       ENDLOOP.
+*      WHEN '2'.
+*        LOOP AT gt_exposure_curr ASSIGNING FIELD-SYMBOL(<m>).
+*          APPEND VALUE #(
+*            exposure_curr         = <m>-exposure_curr
+*            tot_movement          = <m>-tot_amt
+*            tot_miss_rl           = get_total( iv_curr = <m>-exposure_curr iv_cat = '001' )
+*            tot_miss_cr           = get_total( iv_curr = <m>-exposure_curr iv_cat = '002' )
+*            tot_miss_lp           = get_total( iv_curr = <m>-exposure_curr iv_cat = '003' )
+*            tot_miss_wlpl         = get_total( iv_curr = <m>-exposure_curr iv_cat = '004' )
+*            tot_comm_clrng        = get_total( iv_curr = <m>-exposure_curr iv_cat = '005' )
+*            tot_enett_rebate      = get_total( iv_curr = <m>-exposure_curr iv_cat = '006' )
+*            tot_spot_trade        = get_total( iv_curr = <m>-exposure_curr iv_cat = '007' )
+*            tot_am_trasfer        = get_total( iv_curr = <m>-exposure_curr iv_cat = '008' )
+*            tot_docs              = get_total( iv_curr = <m>-exposure_curr iv_cat = '009' )
+*            tot_zn_manual         = get_total( iv_curr = <m>-exposure_curr iv_cat = '010' )
+*            tot_memo              = get_total( iv_curr = <m>-exposure_curr iv_cat = '011' )
+*            tot_fica_data         = get_total( iv_curr = <m>-exposure_curr iv_cat = '012' )
+*            tot_unalloc           = get_total( iv_curr = <m>-exposure_curr iv_cat = '000' )
+*            tot_movement_cc       = <m>-tot_cc_amt
+*            tot_miss_rl_cc        = convert_to_cc( iv_curr = <m>-exposure_curr iv_cat = '001' )
+*            tot_miss_cr_cc        = convert_to_cc( iv_curr = <m>-exposure_curr iv_cat = '002' )
+*            tot_miss_lp_cc        = convert_to_cc( iv_curr = <m>-exposure_curr iv_cat = '003' )
+*            tot_miss_wlpl_cc      = convert_to_cc( iv_curr = <m>-exposure_curr iv_cat = '004' )
+*            tot_comm_clrng_cc     = convert_to_cc( iv_curr = <m>-exposure_curr iv_cat = '005' )
+*            tot_enett_rebate_cc   = convert_to_cc( iv_curr = <m>-exposure_curr iv_cat = '006' )
+*            tot_spot_trade_cc     = convert_to_cc( iv_curr = <m>-exposure_curr iv_cat = '007' )
+*            tot_am_trasfer_cc     = convert_to_cc( iv_curr = <m>-exposure_curr iv_cat = '008' )
+*            tot_docs_cc           = convert_to_cc( iv_curr = <m>-exposure_curr iv_cat = '009' )
+*            tot_zn_manual_cc      = convert_to_cc( iv_curr = <m>-exposure_curr iv_cat = '010' )
+*            tot_memo_cc           = convert_to_cc( iv_curr = <m>-exposure_curr iv_cat = '011' )
+*            tot_fica_data_cc      = convert_to_cc( iv_curr = <m>-exposure_curr iv_cat = '012' )
+*            tot_unalloc_cc        = convert_to_cc( iv_curr = <m>-exposure_curr iv_cat = '000' )
+*         ) TO gt_merchant.
+*       ENDLOOP.
+*    ENDCASE.
+*  ENDMETHOD.
+
+*  METHOD display_alv.
+*
+*    DATA: lo_cols   TYPE REF TO cl_salv_columns_table,
+*          lo_col    TYPE REF TO cl_salv_column_table,
+*          lo_func   TYPE REF TO cl_salv_functions_list,
+*          lt_cols   TYPE salv_t_column_ref.
+*
+*    CASE p_model.
+*      WHEN '1'.
+*        CHECK gt_agency IS NOT INITIAL.
+*        TRY.
+*            cl_salv_table=>factory( IMPORTING r_salv_table = DATA(lo_agency_alv)
+*                                    CHANGING  t_table      = gt_agency ).
+*
+*            lo_cols = lo_agency_alv->get_columns( ).
+*            lo_cols->set_optimize( abap_true ).
+*            lt_cols = lo_cols->get( ).
+*            LOOP AT lt_cols INTO DATA(ls_cols).
+*              DATA(lv_header) = COND scrtext_l( WHEN sy-tabix EQ 1  THEN text-am0
+*                                                WHEN sy-tabix EQ 2  THEN text-am1
+*                                                WHEN sy-tabix EQ 3  THEN text-a01
+*                                                WHEN sy-tabix EQ 4  THEN text-a02
+*                                                WHEN sy-tabix EQ 5  THEN text-a03
+*                                                WHEN sy-tabix EQ 6  THEN text-a04
+*                                                WHEN sy-tabix EQ 7  THEN text-a05
+*                                                WHEN sy-tabix EQ 8  THEN text-a06
+*                                                WHEN sy-tabix EQ 9  THEN text-a07
+*                                                WHEN sy-tabix EQ 10 THEN text-a08
+*                                                WHEN sy-tabix EQ 11 THEN text-a09
+*                                                WHEN sy-tabix EQ 12 THEN text-a10
+*                                                WHEN sy-tabix EQ 13 THEN text-a11
+*                                                WHEN sy-tabix EQ 14 THEN text-am2
+*                                                WHEN sy-tabix EQ 15 THEN text-am3
+*                                                WHEN sy-tabix EQ 16 THEN text-am4
+*                                                WHEN sy-tabix EQ 17 THEN text-am5
+*                                                "Conversion
+*                                                WHEN sy-tabix EQ 18 THEN |{ text-am1 }({ gv_cc_cur })|
+*                                                WHEN sy-tabix EQ 19 THEN |{ text-a01 }({ gv_cc_cur })|
+*                                                WHEN sy-tabix EQ 20 THEN |{ text-a02 }({ gv_cc_cur })|
+*                                                WHEN sy-tabix EQ 21 THEN |{ text-a03 }({ gv_cc_cur })|
+*                                                WHEN sy-tabix EQ 22 THEN |{ text-a04 }({ gv_cc_cur })|
+*                                                WHEN sy-tabix EQ 23 THEN |{ text-a05 }({ gv_cc_cur })|
+*                                                WHEN sy-tabix EQ 24 THEN |{ text-a06 }({ gv_cc_cur })|
+*                                                WHEN sy-tabix EQ 25 THEN |{ text-a07 }({ gv_cc_cur })|
+*                                                WHEN sy-tabix EQ 26 THEN |{ text-a08 }({ gv_cc_cur })|
+*                                                WHEN sy-tabix EQ 27 THEN |{ text-a09 }({ gv_cc_cur })|
+*                                                WHEN sy-tabix EQ 28 THEN |{ text-a10 }({ gv_cc_cur })|
+*                                                WHEN sy-tabix EQ 29 THEN |{ text-a11 }({ gv_cc_cur })|
+*                                                WHEN sy-tabix EQ 30 THEN |{ text-am2 }({ gv_cc_cur })|
+*                                                WHEN sy-tabix EQ 31 THEN |{ text-am3 }({ gv_cc_cur })|
+*                                                WHEN sy-tabix EQ 32 THEN |{ text-am4 }({ gv_cc_cur })|
+*                                                WHEN sy-tabix EQ 33 THEN |{ text-am5 }({ gv_cc_cur })|
+*                                                 ).
+*              DATA(lv_hotspot) = COND #( WHEN sy-tabix <= 17
+*                                         THEN abap_true ).
+*              lo_col ?= lo_cols->get_column( ls_cols-columnname ).
+*              lo_col->set_short_text( '' ).
+*              lo_col->set_medium_text( '' ).
+*              lo_col->set_long_text( lv_header ).
+*              lo_col->set_fixed_header_text( 'L' ).
+*              IF lv_hotspot = abap_true.
+*                lo_col->set_cell_type( if_salv_c_cell_type=>hotspot ).
+*              ENDIF.
+*            ENDLOOP.
+*
+*            lo_agency_alv->get_functions( )->set_all( abap_true ).
+*            lo_agency_alv->get_display_settings( )->set_striped_pattern( abap_true ).
+*
+*            DATA(lo_events_agency) = lo_agency_alv->get_event( ).
+*            SET HANDLER go_main->on_main_click FOR lo_events_agency.
+*
+*            lo_agency_alv->display( ).
+*
+*          CATCH cx_salv_not_found  INTO DATA(lo_not_found).
+*              MESSAGE lo_not_found->get_text( ) TYPE gc_e.
+*
+*          CATCH cx_salv_msg INTO DATA(lx).
+*            MESSAGE lx->get_text( ) TYPE gc_e.
+*        ENDTRY.
+*      WHEN '2'.
+*        CHECK gt_merchant IS NOT INITIAL.
+*        TRY.
+*            cl_salv_table=>factory( IMPORTING r_salv_table = DATA(lo_merchant_alv)
+*                                    CHANGING  t_table      = gt_merchant ).
+*
+*            lo_cols = lo_merchant_alv->get_columns( ).
+*            lo_cols->set_optimize( abap_true ).
+*            lt_cols = lo_cols->get( ).
+*            LOOP AT lt_cols INTO ls_cols.
+*              lv_header = COND scrtext_l( WHEN sy-tabix EQ 1  THEN text-am0
+*                                          WHEN sy-tabix EQ 2  THEN text-am1
+*                                          WHEN sy-tabix EQ 3  THEN text-m01
+*                                          WHEN sy-tabix EQ 4  THEN text-m02
+*                                          WHEN sy-tabix EQ 5  THEN text-m03
+*                                          WHEN sy-tabix EQ 6  THEN text-m04
+*                                          WHEN sy-tabix EQ 7  THEN text-m05
+*                                          WHEN sy-tabix EQ 8  THEN text-m06
+*                                          WHEN sy-tabix EQ 9  THEN text-m07
+*                                          WHEN sy-tabix EQ 10 THEN text-m08
+*                                          WHEN sy-tabix EQ 11 THEN text-m09
+*                                          WHEN sy-tabix EQ 12 THEN text-m10
+*                                          WHEN sy-tabix EQ 13 THEN text-am2
+*                                          WHEN sy-tabix EQ 14 THEN text-am4
+*                                          WHEN sy-tabix EQ 15 THEN text-am5
+*                                          "Conversion
+*                                          WHEN sy-tabix EQ 16 THEN |{ text-am1 }({ gv_cc_cur })|
+*                                          WHEN sy-tabix EQ 17 THEN |{ text-m01 }({ gv_cc_cur })|
+*                                          WHEN sy-tabix EQ 18 THEN |{ text-m02 }({ gv_cc_cur })|
+*                                          WHEN sy-tabix EQ 19 THEN |{ text-m03 }({ gv_cc_cur })|
+*                                          WHEN sy-tabix EQ 20 THEN |{ text-m04 }({ gv_cc_cur })|
+*                                          WHEN sy-tabix EQ 21 THEN |{ text-m05 }({ gv_cc_cur })|
+*                                          WHEN sy-tabix EQ 22 THEN |{ text-m06 }({ gv_cc_cur })|
+*                                          WHEN sy-tabix EQ 23 THEN |{ text-m07 }({ gv_cc_cur })|
+*                                          WHEN sy-tabix EQ 24 THEN |{ text-m08 }({ gv_cc_cur })|
+*                                          WHEN sy-tabix EQ 25 THEN |{ text-m09 }({ gv_cc_cur })|
+*                                          WHEN sy-tabix EQ 26 THEN |{ text-m10 }({ gv_cc_cur })|
+*                                          WHEN sy-tabix EQ 27 THEN |{ text-am2 }({ gv_cc_cur })|
+*                                          WHEN sy-tabix EQ 28 THEN |{ text-am4 }({ gv_cc_cur })|
+*                                          WHEN sy-tabix EQ 29 THEN |{ text-am5 }({ gv_cc_cur })| ).
+*              lv_hotspot = COND #( WHEN sy-tabix <= 15
+*                                   THEN abap_true ).
+*              lo_col ?= lo_cols->get_column( ls_cols-columnname ).
+*              lo_col->set_short_text( '' ).
+*              lo_col->set_medium_text( '' ).
+*              lo_col->set_long_text( lv_header ).
+*              lo_col->set_fixed_header_text( 'L' ).
+*              IF lv_hotspot = abap_true.
+*                lo_col->set_cell_type( if_salv_c_cell_type=>hotspot ).
+*              ENDIF.
+*            ENDLOOP.
+*
+*            lo_merchant_alv->get_functions( )->set_all( abap_true ).
+*            lo_merchant_alv->get_display_settings( )->set_striped_pattern( abap_true ).
+*
+*            DATA(lo_events_merchant) = lo_merchant_alv->get_event( ).
+*            SET HANDLER go_main->on_main_click FOR lo_events_merchant.
+*
+*            lo_func = lo_merchant_alv->get_functions( ).
+*            lo_func->set_all( abap_true ).
+*
+*            lo_merchant_alv->display( ).
+*
+*          CATCH cx_salv_not_found  INTO lo_not_found.
+*              MESSAGE lo_not_found->get_text( ) TYPE gc_e.
+*
+*          CATCH cx_salv_msg INTO lx.
+*            MESSAGE lx->get_text( ) TYPE gc_e.
+*        ENDTRY.
+*    ENDCASE.
+*  ENDMETHOD.
+*EOD of JIRA: FSFXBAM-348
+
+  METHOD get_total.
+    rv_tot = REDUCE fins_vwcur12( INIT sum = CONV fins_vwcur12( 0 )
+                                  FOR x IN gt_category
+                                  WHERE ( exposure_curr = iv_curr
+                                          AND category = iv_cat
+                                          AND model = iv_model )  "(+) of JIRA: FSFXBAM-601
+                                          NEXT sum = sum + x-tot_amt ). "#EC CI_STDSEQ
+  ENDMETHOD.
+
+  METHOD convert_to_cc.
+    rv_tot = REDUCE fins_vwcur12( INIT sum = CONV fins_vwcur12( 0 )
+                                  FOR x IN gt_cc_convert
+                                  WHERE ( exposure_curr = iv_curr
+                                          AND category = iv_cat
+                                          AND model = iv_model )  "(+) of JIRA: FSFXBAM-601
+                                          NEXT sum = sum + x-tot_amt ). "#EC CI_STDSEQ
+  ENDMETHOD.
+
+  METHOD on_main_click.
+    FREE gt_main_dtl.
+
+*BOC of JIRA: FSFXBAM-348
+    FIELD-SYMBOLS: <ls_out> TYPE any,
+                   <val>    TYPE any.
+
+    READ TABLE <gt_out> ASSIGNING <ls_out> INDEX row.
+    IF sy-subrc = 0.
+      ASSIGN COMPONENT 'EXPOSURE_CURR' OF STRUCTURE <ls_out> TO <val>.
+      IF sy-subrc = 0.
+        DATA(lv_curr) = CONV fins_currw( <val> ).
+*        DATA(lv_cat)  = CONV zde_fx_snapshot_category( column+4(3) )."(-) of JIRA FSFXBAM-601
+
+*BOC of JIRA: FSFXBAM-601
+SPLIT column AT '_' INTO DATA(lv_t0) DATA(lv_t1) DATA(lv_t2) DATA(lv_t3).
+DATA(lv_model) = CONV zde_model( lv_t1 ).
+DATA(lv_cat)   = CONV zde_fx_snapshot_category( lv_t2 ).
+*EOC of JIRA: FSFXBAM-601
+
+
+        CASE column.
+          WHEN TEXT-c01 OR TEXT-c02.
+            gt_main_dtl = get_main_dtl( iv_curr = lv_curr
+                                        iv_cat  = ' ' ).
+          WHEN OTHERS.
+            gt_main_dtl = get_main_dtl( iv_curr  = lv_curr
+                                        iv_cat   = lv_cat
+                                        iv_model = lv_model ). "(+) of JIRA: FSFXBAM-601
+        ENDCASE.
+      ENDIF.
+    ENDIF.
+*EOC of JIRA: FSFXBAM-348
+*BOD of JIRA: FSFXBAM-348
+*    IF line_exists( gt_agency[ row ] ).
+*      DATA(ls_agency) = gt_agency[ row ].
+*      CASE column.
+*        WHEN text-c01 OR text-c02.
+*          gt_main_dtl = get_main_dtl( iv_curr = ls_agency-exposure_curr
+*                                      iv_cat  = ' ' ).
+*        WHEN text-c03.
+*          gt_main_dtl = get_main_dtl( iv_curr = ls_agency-exposure_curr
+*                                      iv_cat  = '012' ).
+*        WHEN text-c06.
+*          gt_main_dtl = get_main_dtl( iv_curr = ls_agency-exposure_curr
+*                                      iv_cat  = '001' ).
+*        WHEN text-c07.
+*          gt_main_dtl = get_main_dtl( iv_curr = ls_agency-exposure_curr
+*                                      iv_cat  = '002' ).
+*        WHEN text-c08.
+*          gt_main_dtl = get_main_dtl( iv_curr = ls_agency-exposure_curr
+*                                      iv_cat  = '003' ).
+*        WHEN text-c09.
+*          gt_main_dtl = get_main_dtl( iv_curr = ls_agency-exposure_curr
+*                                      iv_cat  = '004' ).
+*        WHEN text-c10.
+*          gt_main_dtl = get_main_dtl( iv_curr = ls_agency-exposure_curr
+*                                      iv_cat  = '005' ).
+*        WHEN text-c11.
+*          gt_main_dtl = get_main_dtl( iv_curr = ls_agency-exposure_curr
+*                                      iv_cat  = '006' ).
+*        WHEN text-c12.
+*          gt_main_dtl = get_main_dtl( iv_curr = ls_agency-exposure_curr
+*                                      iv_cat  = '007' ).
+*        WHEN text-c13.
+*          gt_main_dtl = get_main_dtl( iv_curr = ls_agency-exposure_curr
+*                                      iv_cat  = '008' ).
+*        WHEN text-c14.
+*          gt_main_dtl = get_main_dtl( iv_curr = ls_agency-exposure_curr
+*                                      iv_cat  = '009' ).
+*        WHEN text-c15.
+*          gt_main_dtl = get_main_dtl( iv_curr = ls_agency-exposure_curr
+*                                      iv_cat  = '010' ).
+*        WHEN text-c16.
+*          gt_main_dtl = get_main_dtl( iv_curr = ls_agency-exposure_curr
+*                                      iv_cat  = '011' ).
+*        WHEN text-c28.
+*          gt_main_dtl = get_main_dtl( iv_curr = ls_agency-exposure_curr
+*                                      iv_cat  = '013' ).
+*        WHEN text-c04.
+*          gt_main_dtl = get_main_dtl( iv_curr = ls_agency-exposure_curr
+*                                      iv_cat  = '014' ).
+*        WHEN text-c05.
+*          gt_main_dtl = get_main_dtl( iv_curr = ls_agency-exposure_curr
+*                                      iv_cat  = '000' ).
+*      ENDCASE.
+*    ENDIF.
+
+*    IF line_exists( gt_merchant[ row ] ).
+*      DATA(ls_merchant) = gt_merchant[ row ].
+*
+*      CASE column.
+*        WHEN text-c01 OR text-c02.
+*          gt_main_dtl = get_main_dtl( iv_curr = ls_merchant-exposure_curr
+*                                      iv_cat  = ' ' ).
+*        WHEN text-c03.
+*          gt_main_dtl = get_main_dtl( iv_curr = ls_merchant-exposure_curr
+*                                      iv_cat  = '011' ).
+*        WHEN text-c17.
+*          gt_main_dtl = get_main_dtl( iv_curr = ls_merchant-exposure_curr
+*                                      iv_cat  = '001' ).
+*        WHEN text-c18.
+*          gt_main_dtl = get_main_dtl( iv_curr = ls_merchant-exposure_curr
+*                                      iv_cat  = '002' ).
+*        WHEN text-c19.
+*          gt_main_dtl = get_main_dtl( iv_curr = ls_merchant-exposure_curr
+*                                      iv_cat  = '003' ).
+*        WHEN text-c20.
+*          gt_main_dtl = get_main_dtl( iv_curr = ls_merchant-exposure_curr
+*                                      iv_cat  = '004' ).
+*        WHEN text-c21.
+*          gt_main_dtl = get_main_dtl( iv_curr = ls_merchant-exposure_curr
+*                                      iv_cat  = '005' ).
+*        WHEN text-c22.
+*          gt_main_dtl = get_main_dtl( iv_curr = ls_merchant-exposure_curr
+*                                      iv_cat  = '006' ).
+*        WHEN text-c24.
+*          gt_main_dtl = get_main_dtl( iv_curr = ls_merchant-exposure_curr
+*                                      iv_cat  = '007' ).
+*        WHEN text-c25.
+*          gt_main_dtl = get_main_dtl( iv_curr = ls_merchant-exposure_curr
+*                                      iv_cat  = '008' ).
+*        WHEN text-c26.
+*          gt_main_dtl = get_main_dtl( iv_curr = ls_merchant-exposure_curr
+*                                      iv_cat  = '009' ).
+*        WHEN text-c27.
+*          gt_main_dtl = get_main_dtl( iv_curr = ls_merchant-exposure_curr
+*                                      iv_cat  = '010' ).
+*        WHEN text-c04.
+*          gt_main_dtl = get_main_dtl( iv_curr = ls_merchant-exposure_curr
+*                                      iv_cat  = '012' ).
+*        WHEN text-c05.
+*          gt_main_dtl = get_main_dtl( iv_curr = ls_merchant-exposure_curr
+*                                      iv_cat  = '000' ).
+*      ENDCASE.
+*    ENDIF.
+*EOD of JIRA: FSFXBAM-348
+    IF gt_main_dtl IS INITIAL.
+      MESSAGE TEXT-e04 TYPE gc_e DISPLAY LIKE gc_e.
+    ELSE.
+      build_main_dtl_alv( ).
+      IF p_ficdtl IS INITIAL.       "(+) of JIRA: FSFXBAM-601
+        aggregate_main_dtl_alv( ).
+      ENDIF.                        "(+) of JIRA: FSFXBAM-601
+      display_main_dtl_alv( ).
+    ENDIF.
+  ENDMETHOD.
+
+  METHOD build_main_dtl_alv.
+    FREE gt_main_dtl_alv.
+    LOOP AT gt_main_dtl ASSIGNING FIELD-SYMBOL(<a>).
+      APPEND VALUE #(
+        bukrs       = <a>-bukrs
+        gjahr       = <a>-gjahr
+        belnr       = <a>-belnr
+        docln       = <a>-docln
+        timestamp   = |{ <a>-timestamp TIMESTAMP = USER TIMEZONE = gc_tzone }|
+        model       = <a>-model
+        category    = VALUE #( gt_snapcat[ priority = <a>-category model = <a>-model ]-name OPTIONAL )
+        racct       = <a>-racct
+        rtcur       = <a>-rtcur
+        tsl         = <a>-tsl
+        rhcur       = <a>-rhcur
+        hsl         = <a>-hsl
+        budat       = <a>-budat
+        sgtxt       = <a>-sgtxt
+        zuonr       = <a>-zuonr
+        blart       = <a>-blart
+        gkont       = <a>-gkont
+        datasource  = <a>-datasource
+        cert_lvl    = <a>-cert_lvl
+        plan_lvl    = <a>-plan_lvl
+        avdat       = <a>-avdat
+        fica_flag   = <a>-fica_flag
+        fica_opbel  = <a>-fica_opbel  "(+) of JIRA: FSFXBAM-601
+        fica_blart  = VALUE #( gt_blart_text[ spras = gc_en blart = <a>-fica_blart ]-ltext OPTIONAL )
+        fica_ernam  = <a>-fica_ernam
+        hvorg_txt   = VALUE #( gt_maintrans[ spras = gc_en hvorg = <a>-fica_hvorg ]-txt30 OPTIONAL )
+        tvorg_txt   = VALUE #( gt_subtrans[ spras = gc_en hvorg = <a>-fica_hvorg tvorg = <a>-fica_tvorg  ]-txt30 OPTIONAL )
+      ) TO gt_main_dtl_alv.                              "#EC CI_STDSEQ
+    ENDLOOP.
+  ENDMETHOD.
+
+  METHOD aggregate_main_dtl_alv.
+    DATA: lt_main_dtl_alv TYPE tyt_alv. "Local internal table for ALV
+
+    "Sort by Company code, Fiscal year, Document number and item Number
+    SORT gt_main_dtl_alv BY bukrs gjahr belnr docln.
+    lt_main_dtl_alv = VALUE #( FOR m IN gt_main_dtl_alv
+                               WHERE ( fica_flag = abap_true )
+                                                      ( m ) ). "#EC CI_STDSEQ
+
+    DATA(lt_main_agg) = VALUE tyt_alv(
+        FOR GROUPS <grp> OF <row> IN lt_main_dtl_alv
+        GROUP BY ( bukrs      = <row>-bukrs
+                   gjahr      = <row>-gjahr
+                   belnr      = <row>-belnr
+                   docln      = <row>-docln
+*BOC of JIRA: FSFXBAM-601
+                   category   = <row>-category        "(+)
+                   rtcur      = <row>-rtcur )         "(+)
+*                   racct      = <row>-racct          "(-)
+*                   gkont      = <row>-gkont          "(-)
+*                   fica_blart = <row>-fica_blart     "(-)
+*                   fica_ernam = <row>-fica_ernam     "(-)
+*                   hvorg_txt  = <row>-hvorg_txt      "(-)
+*                   tvorg_txt  = <row>-tvorg_txt )    "(-)
+*EOC of JIRA: FSFXBAM-601
+        LET sum_tsl = REDUCE fins_vtcur12(
+                        INIT s = CONV fins_vtcur12( 0 )
+                        FOR <r> IN GROUP <grp>
+                        NEXT s = s + <r>-tsl )
+            sum_hsl = REDUCE fins_vtcur12(
+                        INIT s = CONV fins_vtcur12( 0 )
+                        FOR <r> IN GROUP <grp>
+                        NEXT s = s + <r>-hsl )
+        IN
+        ( bukrs       = <grp>-bukrs
+          gjahr       = <grp>-gjahr
+          belnr       = <grp>-belnr
+          docln       = <grp>-docln
+*BOC of JIRA: FSFXBAM-601
+          category    = <grp>-category      "(+)
+          rtcur       = <grp>-rtcur         "(+)
+*          acct       = <grp>-racct         "(-)
+          tsl         = sum_tsl             "(+)
+          hsl         = sum_hsl )           "(+)
+*         gkont       = <grp>-gkont         "(-)
+*         fica_blart  = <grp>-fica_blart    "(-)
+*         fica_ernam  = <grp>-fica_ernam    "(-)
+*         hvorg_txt   = <grp>-hvorg_txt     "(-)
+*         tvorg_txt   = <grp>-tvorg_txt )   "(-)
+*EOC of JIRA: FSFXBAM-601
+        ).
+
+**BOC of JIRA: FSFXBAM-601
+*    CHECK lt_main_agg[] IS NOT INITIAL.
+*    LOOP AT lt_main_agg ASSIGNING FIELD-SYMBOL(<agg>).
+*      DATA(ls_agg) = VALUE #( lt_main_dtl_alv[ bukrs      = <agg>-bukrs
+*                                               gjahr      = <agg>-gjahr
+*                                               belnr      = <agg>-belnr
+*                                               docln      = <agg>-docln
+*                                               racct      = <agg>-racct
+*                                               gkont      = <agg>-gkont
+*                                               fica_blart = <agg>-fica_blart
+*                                               fica_ernam = <agg>-fica_ernam
+*                                               hvorg_txt  = <agg>-hvorg_txt
+*                                               tvorg_txt  = <agg>-tvorg_txt ] OPTIONAL ). "#EC CI_STDSEQ
+*
+*      <agg>-timestamp   = ls_agg-timestamp.
+*      <agg>-model       = ls_agg-model.
+*      <agg>-category    = ls_agg-category.
+*      <agg>-rtcur       = ls_agg-rtcur.
+*      <agg>-rhcur       = ls_agg-rhcur.
+*      <agg>-budat       = ls_agg-budat.
+*      <agg>-sgtxt       = ls_agg-sgtxt.
+*      <agg>-zuonr       = ls_agg-zuonr.
+*      <agg>-blart       = ls_agg-blart.
+*      <agg>-datasource  = ls_agg-datasource.
+*      <agg>-cert_lvl    = ls_agg-cert_lvl.
+*      <agg>-plan_lvl    = ls_agg-plan_lvl.
+*      <agg>-avdat       = ls_agg-avdat.
+*      <agg>-fica_flag   = ls_agg-fica_flag.
+*    ENDLOOP.
+*EOC of JIRA: FSFXBAM-601
+
+*BOC of JIRA: FSFXBAM-601
+    CHECK lt_main_agg[] IS NOT INITIAL.
+    LOOP AT lt_main_agg ASSIGNING FIELD-SYMBOL(<agg>).
+      "(+) FSFXBAM-601: all detail rows behind this aggregated FIGL item
+      DATA(lt_grp) = VALUE tyt_alv( FOR d IN lt_main_dtl_alv
+                                    WHERE ( bukrs      = <agg>-bukrs
+                                            AND gjahr    = <agg>-gjahr
+                                            AND belnr    = <agg>-belnr
+                                            AND docln    = <agg>-docln
+                                            AND category = <agg>-category
+                                            AND rtcur    = <agg>-rtcur )
+                                    ( d ) ).             "#EC CI_STDSEQ
+      DATA(ls_rep) = lt_grp[ 1 ].
+
+      "fields hat don't change per FIGL item then copy from first row
+      <agg>-timestamp  = ls_rep-timestamp.
+      <agg>-model      = ls_rep-model.
+      <agg>-racct      = ls_rep-racct.
+      <agg>-rhcur      = ls_rep-rhcur.
+      <agg>-budat      = ls_rep-budat.
+      <agg>-sgtxt      = ls_rep-sgtxt.
+      <agg>-zuonr      = ls_rep-zuonr.
+      <agg>-blart      = ls_rep-blart.
+      <agg>-gkont      = ls_rep-gkont.
+      <agg>-datasource = ls_rep-datasource.
+      <agg>-cert_lvl   = ls_rep-cert_lvl.
+      <agg>-plan_lvl   = ls_rep-plan_lvl.
+      <agg>-avdat      = ls_rep-avdat.
+      <agg>-fica_flag  = ls_rep-fica_flag.
+
+      "FICA fields can differ per doc, blank if not the same
+      <agg>-fica_opbel = ls_rep-fica_opbel.
+      <agg>-fica_blart = ls_rep-fica_blart.
+      <agg>-fica_ernam = ls_rep-fica_ernam.
+      <agg>-hvorg_txt  = ls_rep-hvorg_txt.
+      <agg>-tvorg_txt  = ls_rep-tvorg_txt.
+      LOOP AT lt_grp ASSIGNING FIELD-SYMBOL(<g>) FROM 2.
+        IF <g>-fica_opbel <> ls_rep-fica_opbel. CLEAR <agg>-fica_opbel. ENDIF.
+        IF <g>-fica_blart <> ls_rep-fica_blart. CLEAR <agg>-fica_blart. ENDIF.
+        IF <g>-fica_ernam <> ls_rep-fica_ernam. CLEAR <agg>-fica_ernam. ENDIF.
+        IF <g>-hvorg_txt  <> ls_rep-hvorg_txt.  CLEAR <agg>-hvorg_txt.  ENDIF.
+        IF <g>-tvorg_txt  <> ls_rep-tvorg_txt.  CLEAR <agg>-tvorg_txt.  ENDIF.
+      ENDLOOP.
+    ENDLOOP.
+*EOC of JIRA: FSFXBAM-601
+
+    "Delete entries when fica_flag is active
+    DELETE gt_main_dtl_alv WHERE fica_flag = abap_true.  "#EC CI_STDSEQ
+    gt_main_dtl_alv =  VALUE #( BASE gt_main_dtl_alv
+                                FOR agg IN lt_main_agg
+                         ( CORRESPONDING #( agg ) ) ).   "#EC CI_STDSEQ
+
+  ENDMETHOD.
+
+  METHOD on_sub_click.
+    "Check if the selected entry exists.
+    IF line_exists( gt_main_dtl_alv[ row ] ).
+      DATA(ls_main) = gt_main_dtl_alv[ row ].
+
+      CASE column.
+        WHEN 'BELNR'.
+          IF ls_main-cert_lvl = 'MEMO'.
+            SET PARAMETER ID 'FFI' FIELD ls_main-belnr.
+            CALL TRANSACTION 'FF65' AND SKIP FIRST SCREEN.
+*            CALL TRANSACTION 'FF65' WITH AUTHORITY-CHECK AND SKIP FIRST SCREEN.
+          ELSE.
+            SET PARAMETER ID 'BLN' FIELD ls_main-belnr.
+            SET PARAMETER ID 'BUK' FIELD ls_main-bukrs.
+            SET PARAMETER ID 'GJR' FIELD ls_main-gjahr.
+            CALL TRANSACTION 'FB03' AND SKIP FIRST SCREEN.
+*            CALL TRANSACTION 'FB03' WITH AUTHORITY-CHECK AND SKIP FIRST SCREEN.
+          ENDIF.
+        WHEN OTHERS.
+      ENDCASE.
+    ENDIF.
+  ENDMETHOD.
+
+  METHOD display_main_dtl_alv.
+    "Data declaration for ALV Display
+    DATA: lo_cols TYPE REF TO cl_salv_columns_table,
+          lo_col  TYPE REF TO cl_salv_column_table,
+          lo_func TYPE REF TO cl_salv_functions_list,
+          lt_cols TYPE salv_t_column_ref.
+
+    TRY.
+        "Class to display ALV
+        cl_salv_table=>factory( IMPORTING r_salv_table = DATA(lo_main_dtl)
+                                CHANGING  t_table      = gt_main_dtl_alv ).
+
+        lo_cols = lo_main_dtl->get_columns( ).
+        lo_cols->set_optimize( abap_true ).
+        lt_cols = lo_cols->get( ).
+        LOOP AT lt_cols INTO DATA(ls_cols).
+          lo_col ?= lo_cols->get_column( ls_cols-columnname ).
+          IF ls_cols-columnname = 'BELNR'.
+            lo_col->set_cell_type( if_salv_c_cell_type=>hotspot ).
+          ENDIF.
+          IF ls_cols-columnname = 'MANDT' OR
+            ls_cols-columnname = 'FICA_FLAG'.
+            lo_col->set_visible( if_salv_c_bool_sap=>false ).
+          ENDIF.
+          IF ls_cols-columnname = 'TIMESTAMP' ##NO_TEXT.
+            lo_col->set_short_text( 'Timestamp' ) ##NO_TEXT.
+            lo_col->set_medium_text( 'Create Timestamp' ) ##NO_TEXT.
+            lo_col->set_long_text( 'Create Timestamp' ) ##NO_TEXT.
+          ENDIF.
+        ENDLOOP.
+        "Call method to get all the Functions
+        lo_main_dtl->get_functions( )->set_all( abap_true ).
+        "Set Zebra pattern on ALV output
+        lo_main_dtl->get_display_settings( )->set_striped_pattern( abap_true ).
+
+        DATA(lo_events_main) = lo_main_dtl->get_event( ).
+        "Event handler for single click on the entry
+        SET HANDLER go_main->on_sub_click FOR lo_events_main.
+
+        lo_main_dtl->display( ).
+
+      CATCH cx_salv_not_found  INTO DATA(lo_not_found).
+        MESSAGE lo_not_found->get_text( ) TYPE gc_e.
+
+      CATCH cx_salv_msg INTO DATA(lx).
+        MESSAGE lx->get_text( ) TYPE gc_e.
+    ENDTRY.
+  ENDMETHOD.
+
+  METHOD get_main_dtl.
+    IF iv_cat IS INITIAL.
+      rt_stage = VALUE #( FOR drilldown IN gt_stage
+                          WHERE ( rtcur = iv_curr )
+                                   ( drilldown ) ).      "#EC CI_STDSEQ
+    ELSE.
+      rt_stage = VALUE #( FOR drilldown IN gt_stage
+                          WHERE ( rtcur = iv_curr
+                                  AND category = iv_cat
+                                  AND model = iv_model ) "(+) of JIRA:FSFXBAM-601
+                                         ( drilldown ) ). "#EC CI_STDSEQ
+    ENDIF.
+  ENDMETHOD.
+
+*BOC of JIRA: FSFXBAM-348
+  METHOD build_categories.
+    SELECT *
+      FROM ztr_fx_snapcat
+      INTO TABLE @gt_snapcat
+*     WHERE model = @p_model.                 "#EC CI_ALL_FIELDS_NEEDED   "(-) of JIRA: FSFXBASM-601
+      WHERE model IN @s_model.                                            "(+) of JIRA: FSFXBASM-601
+    SORT gt_snapcat BY priority ASCENDING.
+  ENDMETHOD.
+
+  METHOD build_structure.
+    "Fixed column/s
+    APPEND VALUE #( name = 'EXPOSURE_CURR'
+                    type = cl_abap_elemdescr=>get_c( 5 ) ) TO gt_comp.
+
+    APPEND VALUE #( name = 'TOT_MOVEMENT'
+                    type = cl_abap_elemdescr=>get_p( p_length = 16 p_decimals = 2 ) ) TO gt_comp.
+
+    "Dynamic colum/s per category
+    LOOP AT gt_snapcat ASSIGNING FIELD-SYMBOL(<c>).
+*     DATA(lv_f1) = |TOT_{ <c>-priority }|.                "(-) of JIRA: FSFXBAM-601
+      DATA(lv_f1) = |TOT_{ <c>-model }_{ <c>-priority }|.  "(+) of JIRA: FSFXBAM-601
+
+      APPEND VALUE #( name = lv_f1
+                      type = cl_abap_elemdescr=>get_p( p_length = 16 p_decimals = 2 ) ) TO gt_comp.
+    ENDLOOP.
+
+    "Fixed columns/s
+    APPEND VALUE #( name = 'TOT_MOVEMENT_CC'
+                    type = cl_abap_elemdescr=>get_p( p_length = 16 p_decimals = 2 ) ) TO gt_comp.
+
+    "Dynamic colum/s per category
+    LOOP AT gt_snapcat ASSIGNING FIELD-SYMBOL(<cc>).
+*     DATA(lv_f2) = |TOT_{ <cc>-priority }_CC|.                "(-) of JIRA: FSFXBAM-601
+      DATA(lv_f2) = |TOT_{ <cc>-model }_{ <cc>-priority }_CC|. "(+) of JIRA: FSFXBAM-601
+
+      APPEND VALUE #( name = lv_f2
+                      type = cl_abap_elemdescr=>get_p( p_length = 16 p_decimals = 2 ) ) TO gt_comp.
+    ENDLOOP.
+  ENDMETHOD.
+
+  METHOD build_table.
+    DATA: lo_struc TYPE REF TO cl_abap_structdescr,
+          lo_tab   TYPE REF TO cl_abap_tabledescr,
+          lr_tab   TYPE REF TO data.
+
+    lo_struc = cl_abap_structdescr=>create( gt_comp ).
+    lo_tab   = cl_abap_tabledescr=>create( lo_struc ).
+    CREATE DATA lr_tab TYPE HANDLE lo_tab.
+
+    ASSIGN lr_tab->* TO <gt_out>.
+  ENDMETHOD.
+
+  METHOD fill_table.
+    FIELD-SYMBOLS: <wa>  TYPE any,
+                   <val> TYPE any.
+
+    LOOP AT gt_exposure_curr ASSIGNING FIELD-SYMBOL(<a>).
+      APPEND INITIAL LINE TO <gt_out> ASSIGNING <wa>.
+
+      "Fixed cols
+      ASSIGN COMPONENT 'EXPOSURE_CURR' OF STRUCTURE <wa> TO <val>.
+      <val> = <a>-exposure_curr.
+
+      ASSIGN COMPONENT 'TOT_MOVEMENT' OF STRUCTURE <wa> TO <val>.
+      <val> = <a>-tot_amt.
+
+      ASSIGN COMPONENT 'TOT_MOVEMENT_CC' OF STRUCTURE <wa> TO <val>.
+      <val> = <a>-tot_cc_amt.
+
+      "Dynamic cols per category
+      LOOP AT gt_snapcat ASSIGNING FIELD-SYMBOL(<c>).
+*        DATA(lv_f1) = |TOT_{ <c>-priority }|.                  "(-) of JIRA: FSFXBAM-601
+*        DATA(lv_f2) = |TOT{ <c>-priority }_CC|.                "(-) of JIRA: FSFXBAM-601d
+        DATA(lv_f1) = |TOT_{ <c>-model }_{ <c>-priority }|.     "(+) of JIRA: FSFXBAM-601
+        DATA(lv_f2) = |TOT_{ <c>-model }_{ <c>-priority }_CC|.  "(+) of JIRA: FSFXBAM-601
+
+        ASSIGN COMPONENT lv_f1 OF STRUCTURE <wa> TO <val>.
+        IF sy-subrc = 0.
+          <val> = get_total( iv_curr = <a>-exposure_curr
+                             iv_cat = <c>-priority
+                             iv_model = <c>-model ).            "(+) of JIRA: FSFXBAM-601
+        ENDIF.
+
+        ASSIGN COMPONENT lv_f2 OF STRUCTURE <wa> TO <val>.
+        IF sy-subrc = 0.
+          <val> = convert_to_cc( iv_curr = <a>-exposure_curr
+                                 iv_cat = <c>-priority
+                                 iv_model = <c>-model ).        "(+) of JIRA: FSFXBAM-601
+        ENDIF.
+      ENDLOOP.
+    ENDLOOP.
+  ENDMETHOD.
+
+  METHOD build_alv.
+    "Data declarations for ALV Display
+    DATA: lo_cols TYPE REF TO cl_salv_columns_table,
+          lo_col  TYPE REF TO cl_salv_column_table,
+          lo_func TYPE REF TO cl_salv_functions_list,
+          lt_cols TYPE salv_t_column_ref.
+
+*BOC of JIRA: FSFXBAM-601
+    DATA: lv_model TYPE zde_model,
+          lv_prio  TYPE seqnr.
+*EOC of JIRA: FSFXBAM-601
+
+    CHECK <gt_out> IS NOT INITIAL.
+
+    TRY.
+        "Class to display ALV
+        cl_salv_table=>factory( IMPORTING r_salv_table = DATA(lo_agency_alv)
+                                CHANGING  t_table      = <gt_out> ).
+
+        lo_cols = lo_agency_alv->get_columns( ).
+        lo_cols->set_optimize( abap_true ).
+        lt_cols = lo_cols->get( ).
+        LOOP AT lt_cols INTO DATA(ls_cols).
+
+*BOC of JIRA: FSFXBAM-601
+          CLEAR: lv_model, lv_prio.
+          SPLIT ls_cols-columnname AT '_' INTO DATA(lv_t0) DATA(lv_t1) DATA(lv_t2) DATA(lv_t3).
+          lv_model = lv_t1.
+          lv_prio  = lv_t2.
+*EOC of JIRA: FSFXBAM-601
+
+*          DATA(lv_text)   = VALUE #(  gt_snapcat[ priority = ls_cols-columnname+4(3) ]-name OPTIONAL ).  "(-) of JIRA: FSFXBAM-601
+          DATA(lv_text)   = VALUE #(  gt_snapcat[ model = lv_model priority = lv_prio ]-name OPTIONAL ).  "(+) of JIRA: FSFXBAM-601
+          DATA(lv_header) = COND scrtext_l( WHEN ls_cols-columnname EQ 'EXPOSURE_CURR'    THEN TEXT-am0
+                                            WHEN ls_cols-columnname EQ 'TOT_MOVEMENT'     THEN TEXT-am1
+                                            WHEN ls_cols-columnname EQ 'TOT_MOVEMENT_CC'  THEN |{ TEXT-am1 }({ gv_cc_cur })|
+                                            WHEN ls_cols-columnname CP 'TOT*CC*'          THEN |{ lv_text }({ gv_cc_cur })|
+                                            ELSE lv_text ).
+
+          DATA(lv_hotspot) = COND #( WHEN ls_cols-columnname CP '*CC*'
+                                     THEN abap_false
+                                     ELSE abap_true ).
+          lo_col ?= lo_cols->get_column( ls_cols-columnname ).
+          lo_col->set_short_text( '' ).
+          lo_col->set_medium_text( '' ).
+          lo_col->set_long_text( lv_header ).
+          lo_col->set_fixed_header_text( 'L' ).
+          IF lv_hotspot = abap_true.
+            "Enable Hotspot for the column which has 'CC'
+            lo_col->set_cell_type( if_salv_c_cell_type=>hotspot ).
+          ENDIF.
+        ENDLOOP.
+
+        "Get all ALV functions
+        lo_agency_alv->get_functions( )->set_all( abap_true ).
+        lo_agency_alv->get_display_settings( )->set_striped_pattern( abap_true ).
+
+        DATA(lo_events_agency) = lo_agency_alv->get_event( ).
+        SET HANDLER go_main->on_main_click FOR lo_events_agency.
+
+        lo_agency_alv->display( ).
+
+      CATCH cx_salv_not_found  INTO DATA(lo_not_found).
+        MESSAGE lo_not_found->get_text( ) TYPE gc_e.
+
+      CATCH cx_salv_msg INTO DATA(lx).
+        MESSAGE lx->get_text( ) TYPE gc_e.
+    ENDTRY.
+  ENDMETHOD.
+*EOC of JIRA: FSFXBAM-348
+ENDCLASS.
