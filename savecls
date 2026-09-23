@@ -1,0 +1,1420 @@
+*&-------------------------------------------------------------------------*
+*& Include ZR_TR_FX_SNAPSHOT_DELTA_CLS
+*&-------------------------------------------------------------------------*
+*& Program Name           : ZR_TR_FX_SNAPSHOT_DELTA_TOP
+*& Description            : FX Snapshot Comparison Delta Report Class Inc
+*& Developer              : Normie Angeles (197089634349)
+*& Creation Date          : 10/13/2025
+*& Charm ID               :
+*& Transport Request No   : S0DK940315
+*&-------------------------------------------------------------------------*
+*& Modification History
+*&-------------------------------------------------------------------------*
+*& Date       Charm ID      Developer       Transport   Description                                                *
+*&-----------------------------------------------------------------------------------*
+*& 8/18/2026                465794779093    S1DK92376   JIRA: FSFXBAM-601            *
+*&                                                      Addition of characteristics  *
+*&                                                      for BRF+                     *
+*&                                                                                   *
+*&                                                      Modification of Existing     *
+*&                                                      characteristics for BRF+     *
+*------------------------------------------------------------------------------------*
+*       CLASS lcl_main DEFINITION
+*--------------------------------------------------------------------------*
+
+    CLASS lcl_main DEFINITION FINAL.
+      PUBLIC SECTION.
+        CONSTANTS:
+          gc_e(1)                 TYPE c          VALUE 'E',
+          gc_i(1)                 TYPE c          VALUE 'I',
+          gc_p(1)                 TYPE c          VALUE 'P',
+          gc_s(1)                 TYPE c          VALUE 'S',
+          gc_eq(2)                TYPE c          VALUE 'EQ',
+          gc_bt(2)                TYPE c          VALUE 'BT',
+          gc_tzone(6)             TYPE c          VALUE 'UTC',
+          gc_memo(4)              TYPE c          VALUE 'MEMO',
+          gc_cp(2)                TYPE c          VALUE 'CP', "(+) of JIRA: FSFXBAM-601 - Option CP
+          gc_en                   TYPE spras      VALUE 'E',
+          gc_fkksu                TYPE awtyp      VALUE 'FKKSU',
+          gc_oneexp               TYPE fxm_kf     VALUE 'ONE EXPOSURE',
+          gc_kf_exp               TYPE rvari_vnam VALUE 'ZTR_FX_EXP_RPT_KEY_FIGURE_EXP',
+          gc_clean                TYPE rvari_vnam VALUE 'ZTR_FX_SNAPSHOT_CLEAN',
+          gc_last_run             TYPE rvari_vnam VALUE 'ZTR_FX_SNAPSHOT_LAST_RUN',
+          gc_stream               TYPE rvari_vnam VALUE 'ZTR_FX_SNAPSHOT_STREAM',  "(+) of JIRA: FSFXBAM-601 - TVARVC name
+          gc_ic_gl                TYPE rvari_vnam VALUE 'ZTR_FX_SNAPSHOT_IC_GL',      "(+) of JIRA: FSFXBAM-601 - intercomany gl accounts
+          gc_ic_optype            TYPE rvari_vnam VALUE 'ZTR_FX_SNAPSHOT_IC_OPTYPE',  "(+) of JIRA: FSFXBAM-601 - intercomany gl account,
+          gc_fi_account(10)       TYPE c          VALUE 'FI_ACCOUNT',
+          gc_fi_document_type(16) TYPE c          VALUE 'FI_DOCUMENT_TYPE',
+          gc_planning_level(14)   TYPE c          VALUE 'PLANNING_LEVEL'.
+
+        TYPES:
+          tyt_model    TYPE STANDARD TABLE OF ztr_fx_category
+                          WITH KEY bs_account pl_account,
+          tyt_kf_sel   TYPE STANDARD TABLE OF fxm_kf_sel
+                          WITH KEY kf fieldname sel_index,
+          tyt_kf_def   TYPE STANDARD TABLE OF fxm_kf_def
+                          WITH KEY kf,
+          tyt_gl       TYPE STANDARD TABLE OF ty_gl
+                          WITH EMPTY KEY,
+          tyt_fica     TYPE STANDARD TABLE OF ty_fica
+                          WITH EMPTY KEY,
+          tyt_memo     TYPE STANDARD TABLE OF ty_memo
+                          WITH EMPTY KEY,
+          tyt_abs      TYPE STANDARD TABLE OF fkk_abs_items
+                          WITH EMPTY KEY,
+          tyt_snapshot TYPE STANDARD TABLE OF ztr_fx_snapshot
+                          WITH KEY mandt guid bukrs gjahr belnr fica_opbel fica_augbl docln timestamp,
+          tyt_skb1     TYPE STANDARD TABLE OF ty_skb1
+                          WITH EMPTY KEY,
+          "BOC of JIRA: FSFXBAM-601 465794779093
+          tyt_tvarvc   TYPE STANDARD TABLE OF tvarvc
+                          WITH EMPTY KEY,
+          tyt_fica_ic  TYPE HASHED TABLE OF ty_fica_ic
+                          WITH UNIQUE KEY opbel.
+
+        CLASS-DATA: gt_gl_data TYPE tyt_gl,
+                    gv_cnt     TYPE i,
+                    gs_attrib  TYPE ty_attrib.
+
+        "EOC of JIRA: FSFXBAM-601 465794779093
+
+        METHODS :
+          constructor,
+          validate_selection,
+          run
+            IMPORTING
+              i_datefr TYPE d
+              i_timefr TYPE t
+              i_dateto TYPE d
+              i_timeto TYPE t
+              i_sim    TYPE abap_bool,
+
+
+          "BOC of JIRA: FSFXBAM-601 465794779093
+          run_parallel
+            IMPORTING
+              i_datefr TYPE d
+              i_timefr TYPE t
+              i_dateto TYPE d
+              i_timeto TYPE t
+              i_sim    TYPE abap_bool,
+          run_proc_parallel.
+        "EOC of JIRA: FSFXBAM-601 465794779093
+
+      PRIVATE SECTION.
+        CLASS-DATA:
+          gv_timestampfr        TYPE timestamp,
+          gv_timestampto        TYPE timestamp,
+          gv_clean              TYPE i,
+          gv_sim                TYPE abap_bool,
+          gv_datefr             TYPE d,
+          gv_timefr             TYPE t,
+          gv_dateto             TYPE d,
+          gv_timeto             TYPE t,
+          gs_last_run           TYPE tvarvc,
+          gt_model              TYPE tyt_model,
+          gt_kf_sel             TYPE tyt_kf_sel,
+          gt_kf_def             TYPE tyt_kf_def,
+*         gt_gl_data            TYPE tyt_gl, "(-) of JIRA: FSFXBAM-601,
+          gt_fica_data          TYPE tyt_fica,
+          gt_memo_data          TYPE tyt_memo,
+          gt_abs_items          TYPE tyt_abs,
+          gt_snapshot_tab       TYPE tyt_snapshot,
+          gt_skb1               TYPE tyt_skb1,
+          gt_tvarvc_bhfs        TYPE tyt_tvarvc,  "(+) of JIRA: FSFXBAM-601, for Stream
+          gt_tvarvc_ic_gl       TYPE tyt_tvarvc,  "(+) of JIRA: FSFXBAM-601, TVARVC - IC GL's
+          gt_tvarvc_ic_optype   TYPE tyt_tvarvc,  "(+) of JIRA: FSFXBAM-601, TVARVC - IC* Operation Type
+          gt_fica_ic            TYPE tyt_fica_ic, "(+) of JIRA: FSFXBAM-601, for IC Operation Type
+          gt_brf_err            TYPE STANDARD TABLE OF string,  "(+) of JIRA: FSFXBAM-601, brf exception handle
+          gr_kf_list            TYPE RANGE OF fxm_kf,
+          gr_racct              TYPE RANGE OF acdoca-racct,
+          gr_blart_incl         TYPE RANGE OF acdoca-blart,
+          gr_blart_excl         TYPE RANGE OF acdoca-blart,
+          gr_timestamp          TYPE RANGE OF acdoca-timestamp,
+          gr_plan_lvl           TYPE RANGE OF fdes-ebene,
+          gr_ic_gl              TYPE RANGE OF dfkkopk-hkont,                 "(+) of JIRA: FSFXBAM-601, for Stream
+          gr_ic_optype          TYPE RANGE OF dfkkopk-zz1_operationtype_opk, "(+) of JIRA: FSFXBAM-601, for IC Operation Type
+          gv_par                TYPE abap_bool. "(+) of JIRA: FSFXBAM-601,
+        CLASS-METHODS init_context
+          IMPORTING
+            i_datefr TYPE d
+            i_timefr TYPE t
+            i_dateto TYPE d
+            i_timeto TYPE t
+            i_sim    TYPE abap_bool.
+
+        CLASS-METHODS get_kf_selections.
+        CLASS-METHODS get_latest_snapshot_timestamp.
+        CLASS-METHODS get_gl_data.
+        CLASS-METHODS get_fica_data.
+        CLASS-METHODS get_memo_data.
+        CLASS-METHODS build_tab.
+        CLASS-METHODS delete_snapshot_comparison.
+        CLASS-METHODS update_snapshot_comparison.
+        CLASS-METHODS convert_to_eur
+          IMPORTING
+                    iv_date           TYPE fxm_keydate
+                    iv_curr           TYPE dispw
+                    iv_amt            TYPE wrshw
+          RETURNING VALUE(rv_tot_eur) TYPE fins_vwcur12.
+        CLASS-METHODS get_snapshot_category
+          IMPORTING
+                    rs_gl              TYPE ty_gl
+                    rs_fica            TYPE fkk_abs_items
+                    rs_memo            TYPE ty_memo
+                    iv_model           TYPE zde_model
+                    iv_source          TYPE fxm_datasource
+          RETURNING VALUE(rv_category) TYPE zde_fx_snapshot_category.
+        CLASS-METHODS is_month_end
+          IMPORTING
+                    iv_budat               TYPE budat
+          RETURNING VALUE(rv_is_month_end) TYPE abap_bool.
+        CLASS-METHODS guid
+          RETURNING VALUE(rv_guid) TYPE sysuuid_x16.
+
+    ENDCLASS.
+
+    "BOC of JIRA: FSFXBAM-601 797789148215
+*------------------------------------------------------------------------------------*
+*       CLASS lcl_parallel_processor DEFINITION
+*--------------------------------------------------------------------------*
+    CLASS lcl_parallel_processor DEFINITION INHERITING FROM cl_abap_parallel FINAL.
+      PUBLIC SECTION.
+        CLASS-DATA:
+          gv_sim TYPE abap_bool,
+          gv_par TYPE abap_bool,
+          gv_cnt TYPE i.
+
+
+        METHODS: do REDEFINITION,
+          handle_results IMPORTING p_all_results TYPE cl_abap_parallel=>t_out_tab.
+    ENDCLASS.
+
+    "EOC of JIRA: FSFXBAM-601 797789148215
+
+*--------------------------------------------------------------------------*
+*       CLASS lcl_main IMPLEMENTATION
+*--------------------------------------------------------------------------*
+    CLASS lcl_main IMPLEMENTATION.
+
+      METHOD constructor.
+        SELECT *
+          FROM ztr_fx_category
+          WHERE bs_account IS NOT INITIAL
+          INTO TABLE @gt_model.
+
+        SELECT SINGLE low
+          FROM tvarvc
+          WHERE name = @gc_clean
+            AND type = @gc_p
+          INTO @DATA(lv_clean).
+        IF sy-subrc EQ 0.
+          gv_clean = lv_clean.
+        ENDIF.
+
+        SELECT SINGLE *
+          FROM tvarvc
+          WHERE name = @gc_last_run
+            AND type = @gc_p
+          INTO @gs_last_run.
+
+        SELECT bukrs, saknr
+          FROM skb1
+          WHERE xsalh = @abap_true
+        INTO TABLE @gt_skb1.
+
+        "BOC of JIRA: FSFXBAM-601 465794779093
+        "Get tvarvc entries matching for Stream
+        SELECT *
+          FROM tvarvc
+          WHERE name = @gc_stream
+            AND type = @gc_s
+        INTO TABLE @gt_tvarvc_bhfs.
+
+        "Get Intercompany GL's
+        SELECT *
+          FROM tvarvc
+          WHERE name = @gc_ic_gl
+            AND type = @gc_s
+        INTO TABLE @gt_tvarvc_ic_gl.
+
+        "Get IC Operation Type
+        SELECT *
+          FROM tvarvc
+          WHERE name = @gc_ic_optype
+            AND type = @gc_s
+        INTO TABLE @gt_tvarvc_ic_optype.
+
+        "IC Operation will start with below values
+*        gr_ic_gl = VALUE #( sign = gc_i option = gc_cp
+*                             ( low = '3137*' )
+*                             ( low = '1637*' ) ).
+*        gr_ic_optype = VALUE #( ( sign = gc_i  option = gc_cp
+*                                low = 'IC*' ) ).
+
+
+
+        gr_ic_gl = VALUE #( FOR ls IN gt_tvarvc_ic_gl
+                              ( sign   = ls-sign
+                                option = ls-opti
+                                low    = |{ ls-low ALPHA = IN WIDTH = 10 }|
+                                high   = |{ ls-high ALPHA = IN WIDTH = 10 }| ) ).
+
+        gr_ic_optype = VALUE #( FOR ls IN gt_tvarvc_ic_optype
+                              ( sign   = ls-sign
+                                option = ls-opti
+                                low    = ls-low ) ).
+        "EOC of JIRA: FSFXBAM-601 465794779093
+      ENDMETHOD.
+
+      METHOD validate_selection.
+        CHECK sy-batch = abap_false.
+        IF p_datefr IS INITIAL AND p_dateto IS INITIAL.
+          MESSAGE TEXT-e01 TYPE gc_e DISPLAY LIKE gc_s.
+        ENDIF.
+
+*BOC of JIRA: FSFXBAM-601 Validation for Parallel Processing
+        IF cb_par = abap_true.
+          IF p_batch <= 0.
+            MESSAGE TEXT-e03 TYPE gc_e DISPLAY LIKE gc_s.
+          ENDIF.
+          IF p_cursor <= 0.
+            MESSAGE TEXT-e04 TYPE gc_e DISPLAY LIKE gc_s.
+          ENDIF.
+          IF p_num <= 0.
+            MESSAGE TEXT-e05 TYPE gc_e DISPLAY LIKE gc_s.
+          ENDIF.
+          IF p_perc < 1 OR p_perc > 100.
+            MESSAGE TEXT-e06 TYPE gc_e DISPLAY LIKE gc_s.
+          ENDIF.
+        ENDIF.
+*BOC of JIRA: FSFXBAM-601
+      ENDMETHOD.
+
+
+      METHOD run.
+        init_context(
+          i_datefr = i_datefr
+          i_timefr = i_timefr
+          i_dateto = i_dateto
+          i_timeto = i_timeto
+          i_sim    = i_sim ).
+
+        get_kf_selections( ).
+        get_latest_snapshot_timestamp( ).
+        get_gl_data( ).
+        get_fica_data( ).
+        get_memo_data( ).
+        build_tab( ).
+        update_snapshot_comparison( ).
+      ENDMETHOD.
+
+      METHOD init_context.
+        gv_datefr = i_datefr.
+        gv_timefr = i_timefr.
+        gv_dateto = i_dateto.
+        gv_timeto = i_timeto.
+        gv_sim    = i_sim.
+      ENDMETHOD.
+
+      METHOD get_kf_selections.
+        SELECT sign, opti, low, high FROM tvarvc
+          INTO TABLE @gr_kf_list
+          WHERE name = @gc_kf_exp
+            AND type = @gc_s.
+
+        SELECT *
+          FROM fxm_kf_def
+          WHERE kf IN @gr_kf_list
+          INTO TABLE @gt_kf_def.
+
+        SELECT *
+          FROM fxm_kf_sel
+          WHERE kf IN @gr_kf_list
+            AND low IS NOT NULL
+          INTO TABLE @gt_kf_sel.
+
+        LOOP AT gt_kf_sel ASSIGNING FIELD-SYMBOL(<s>).
+          CASE <s>-fieldname.
+            WHEN gc_fi_account.
+              APPEND VALUE #( sign    = <s>-sign
+                              option  = <s>-sel_option
+                              low     = <s>-low
+                              high    = COND #( WHEN <s>-sel_option = gc_bt THEN <s>-high ELSE '' ) ) TO gr_racct.
+            WHEN gc_fi_document_type.
+              IF <s>-sign = gc_i.
+                APPEND VALUE #( sign    = <s>-sign
+                                option  = <s>-sel_option
+                                low     = <s>-low
+                                high    = COND #( WHEN <s>-sel_option = gc_bt THEN <s>-high ELSE '' ) ) TO gr_blart_incl.
+              ENDIF.
+              IF <s>-sign = gc_e.
+                APPEND VALUE #( sign    = <s>-sign
+                                option  = <s>-sel_option
+                                low     = <s>-low
+                                high    = COND #( WHEN <s>-sel_option = gc_bt THEN <s>-high ELSE '' ) ) TO gr_blart_excl.
+              ENDIF.
+            WHEN gc_planning_level.
+              APPEND VALUE #( sign    = <s>-sign
+                              option  = <s>-sel_option
+                              low     = <s>-low
+                              high    = COND #( WHEN <s>-sel_option = gc_bt THEN <s>-high ELSE '' ) ) TO gr_plan_lvl.
+          ENDCASE.
+        ENDLOOP.
+      ENDMETHOD.
+
+      METHOD get_latest_snapshot_timestamp.
+        " Foreground/Background provided timestamp;
+        IF sy-batch = abap_false
+          OR ( sy-batch = abap_true
+          AND gv_datefr IS NOT INITIAL
+          AND gv_dateto IS NOT INITIAL ).
+
+          CONVERT DATE gv_datefr TIME gv_timefr
+                  INTO TIME STAMP gv_timestampfr
+                  TIME ZONE gc_tzone.
+
+          CONVERT DATE gv_dateto TIME gv_timeto
+                  INTO TIME STAMP gv_timestampto
+                  TIME ZONE gc_tzone.
+
+          APPEND VALUE #( sign = gc_i
+                          option = gc_bt
+                          low = gv_timestampfr
+                          high = gv_timestampto ) TO gr_timestamp.
+
+        ELSE.
+          " current and last run timestamp.
+          GET TIME STAMP FIELD DATA(lv_current).
+          APPEND VALUE #( sign    = gc_i
+                          option  = gc_bt
+                          low     = COND #( WHEN gs_last_run-low IS INITIAL
+                                            THEN lv_current
+                                            ELSE gs_last_run-low )
+                          high    = lv_current  ) TO gr_timestamp.
+
+          gs_last_run-low = lv_current.
+          MODIFY tvarvc FROM gs_last_run.
+        ENDIF.
+
+      ENDMETHOD.
+
+      METHOD get_gl_data.
+        FREE gt_gl_data.
+        SELECT
+          b~rbukrs,
+          b~timestamp,
+          b~drcrk,
+          b~rtcur,
+          b~tsl,
+          b~rwcur,
+          b~wsl,
+          b~rhcur,
+          b~hsl,
+          b~budat,
+          b~blart,
+          b~racct,
+          b~belnr,
+          b~gjahr,
+          b~sgtxt,
+          b~gkont,
+          b~awtyp,
+          b~docln,
+          b~awref,
+          b~aworg,
+          b~zuonr,
+          c~xref1
+          FROM acdoca AS b
+          LEFT OUTER JOIN bseg AS c
+             ON c~bukrs = b~rbukrs
+            AND c~belnr = b~belnr
+            AND c~gjahr = b~gjahr
+            AND c~hkont = b~racct
+            AND lpad( c~buzei,6, '0' ) = b~docln
+          WHERE b~rldnr     = '0L'
+            AND b~timestamp IN @gr_timestamp
+            AND ( b~rtcur <> b~rhcur
+             OR b~rwcur   <> b~rhcur )
+*        AND b~budat   <= @sy-datum  "(-) of JIRA: FSFXBAM-348
+            AND b~tsl     <> 0
+            AND b~blart   IN @gr_blart_incl
+        INTO TABLE @DATA(lt_gl_temp).
+        IF sy-subrc = 0.
+          DELETE lt_gl_temp WHERE blart NOT IN gr_blart_excl. "#EC CI_STDSEQ
+
+          LOOP AT lt_gl_temp ASSIGNING FIELD-SYMBOL(<lfs_temp>).
+
+*BOC of JIRA: FSFXBAM-601
+            IF <lfs_temp>-rtcur <> <lfs_temp>-rhcur
+              AND <lfs_temp>-racct IN gr_racct.
+              gt_gl_data = VALUE #( BASE gt_gl_data ( <lfs_temp> ) ).
+            ENDIF.
+
+            IF <lfs_temp>-rwcur <> <lfs_temp>-rhcur.
+              IF line_exists( gt_skb1[ bukrs = <lfs_temp>-rbukrs saknr = <lfs_temp>-racct ] ).
+                gt_gl_data = VALUE #( BASE gt_gl_data ( <lfs_temp> ) ).
+              ENDIF.
+            ENDIF.
+*            IF ( <lfs_temp>-rtcur <> <lfs_temp>-rhcur
+*               AND <lfs_temp>-racct IN gr_racct )
+*             OR ( <lfs_temp>-rwcur <> <lfs_temp>-rhcur
+*               AND line_exists(
+*                    gt_skb1[
+*                      bukrs = <lfs_temp>-rbukrs
+*                      saknr = <lfs_temp>-racct ] ) ).
+*
+*              APPEND <lfs_temp> TO gt_gl_data.
+*            ENDIF.
+
+
+
+*BOC of JIRA: FSFXBAM-601
+
+
+
+
+          ENDLOOP.
+        ENDIF.
+      ENDMETHOD.
+
+      METHOD get_fica_data.
+        DATA: lt_bukrs     TYPE STANDARD TABLE OF fkkr_bukrs,
+              lt_budat     TYPE STANDARD TABLE OF fkkr_budat,
+              lt_abs_sumsz TYPE STANDARD TABLE OF fkk_abs_sumsz,
+              lt_abs_sum   TYPE STANDARD TABLE OF fkk_abs_sum,
+              lr_bukrs     TYPE RANGE OF bukrs.
+
+        CHECK gt_gl_data IS NOT INITIAL.
+
+        "build company code
+        lt_bukrs = VALUE #( FOR fica IN gt_gl_data
+                            WHERE ( awtyp = gc_fkksu )
+                            ( sign = gc_i option = gc_eq low = fica-rbukrs ) ). "#EC CI_STDSEQ
+
+        SORT lt_bukrs BY low.
+        DELETE ADJACENT DUPLICATES FROM lt_bukrs COMPARING low.
+
+        "build posting date
+        lt_budat = VALUE #( FOR fica IN gt_gl_data
+                            WHERE ( awtyp = gc_fkksu )
+                            ( sign = gc_i option = gc_eq low = fica-budat ) ). "#EC CI_STDSEQ
+
+        SORT lt_budat BY low.
+        DELETE ADJACENT DUPLICATES FROM lt_budat COMPARING low.
+
+        "build reconciliation key
+        lt_abs_sumsz = VALUE #( FOR fica IN gt_gl_data
+                                WHERE ( awtyp = gc_fkksu )
+*                                ( fikey = fica-awref+0(10) && fica-aworg+0(2)                               "(-) of JIRA: FSFXFAM-601
+                                 ( fikey = |{ fica-awref+0(10) WIDTH = 10 ALIGN = LEFT }{ fica-aworg+0(2) }| "(+) of JIRA: FSFXBAM-601
+                                  sumsz = CONV sumsz_kk( fica-xref1 ) bukrs = fica-rbukrs
+                                  belnr = fica-belnr gjahr = fica-gjahr buzei = fica-docln ) ). "#EC CI_STDSEQ
+
+        CHECK lt_abs_sumsz IS NOT INITIAL.
+        CALL FUNCTION 'FKK_FICA_TOTALS_SELECT'
+          EXPORTING
+            i_gl_posted_only = abap_true
+          TABLES
+            t_bukrs          = lt_bukrs
+            t_budat          = lt_budat
+            t_in_sumsz       = lt_abs_sumsz
+            t_out_sum        = lt_abs_sum
+          EXCEPTIONS
+            no_data_selected = 2.
+        IF sy-subrc = 0.
+          CALL FUNCTION 'FKK_DOC_TO_TOTALS_RECONCILIATE'
+            TABLES
+              t_bukrs             = lt_bukrs
+              t_in_sum            = lt_abs_sum
+              t_out_it            = gt_abs_items
+            EXCEPTIONS
+              no_data_selected    = 2
+              selection_cancelled = 3.
+
+          IF sy-subrc = 0.
+*                DELETE gt_abs_items WHERE vkont IS INITIAL. "#EC CI_STDSEQ
+            IF gt_tvarvc_bhfs IS NOT INITIAL.                                                                       "(+) of JIRA: FSFXBAM-601
+              lr_bukrs = VALUE #( FOR ls_bhfs IN gt_tvarvc_bhfs ( sign = 'I' option = 'EQ' low = ls_bhfs-low ) ).
+              DELETE gt_abs_items WHERE bukrs NOT IN lr_bukrs AND vkont IS INITIAL.
+            ENDIF.                                                                                                  "(+) of JIRA: FSFXBAM-601
+          ENDIF.                                                                                                    "(+) of JIRA: FSFXBAM-601
+        ENDIF.
+
+        "Get FICA details
+        CHECK gt_abs_items IS NOT INITIAL.
+        SELECT
+          b~opbel,
+          b~blart,
+          b~ernam,
+          c~hvorg,
+          c~tvorg
+          FROM dfkkko AS b
+          LEFT OUTER JOIN dfkkop AS c
+                  ON c~opbel = b~opbel
+          FOR ALL ENTRIES IN @gt_abs_items
+          WHERE b~opbel = @gt_abs_items-opbel
+        INTO TABLE @gt_fica_data.
+
+
+        "BOC of JIRA: FSFXBAM-601 465794779093
+        "Collect intercompany FI-CA documents(opbel) into gt_fica_ic by IC GL account/op-type
+        SELECT opbel, hkont, zz1_operationtype_opk
+          FROM dfkkopk
+          FOR ALL ENTRIES IN @gt_abs_items
+          WHERE opbel = @gt_abs_items-opbel
+        INTO TABLE @DATA(lt_opk).
+
+        LOOP AT lt_opk ASSIGNING FIELD-SYMBOL(<opk>).
+          IF <opk>-hkont                 IN gr_ic_gl
+          OR <opk>-zz1_operationtype_opk IN gr_ic_optype.
+            INSERT VALUE #( opbel = <opk>-opbel ) INTO TABLE gt_fica_ic.
+          ENDIF.
+        ENDLOOP.
+        "EOC of JIRA: FSFXBAM-601 465794779093
+      ENDMETHOD.
+
+      METHOD get_memo_data.
+
+        DATA: lr_idenr TYPE RANGE OF idenr.
+
+        SELECT
+          bukrs,
+          waers
+          FROM t001
+        INTO TABLE @DATA(lt_t001).
+
+        IF gv_dateto IS NOT INITIAL.
+          DATA(lv_keydate) = gv_dateto.
+        ELSE.
+          lv_keydate = sy-datum.
+        ENDIF.
+
+        FREE gt_memo_data.
+        SELECT
+          fdes~idenr,
+          fdes~bukrs,
+          fdes~bnkko,
+          fdes~ebene,
+          fdes~dispw,
+          fdes~wrshb,
+          fdes~dmshb,
+          fdes~hzdat,
+          fdes~avdat,
+          fdes~merkm,
+          fqm_flow~create_timestamp AS timestamp,
+          fqm_flow~certainty_level AS cert_level
+          FROM fdes
+          INNER JOIN fqm_flow
+            ON fdes~idenr = fqm_flow~origin_document_id
+          WHERE fqm_flow~certainty_level = @gc_memo
+            AND fqm_flow~create_timestamp IN @gr_timestamp
+            AND fdes~ebene IN @gr_plan_lvl
+            AND fdes~wrshb <> 0
+            AND fdes~avdat >= @lv_keydate
+        INTO CORRESPONDING FIELDS OF TABLE @gt_memo_data.
+        IF sy-subrc = 0.
+          LOOP AT gt_memo_data ASSIGNING FIELD-SYMBOL(<memo>).
+            <memo>-waers = VALUE #( lt_t001[ bukrs = <memo>-bukrs ]-waers OPTIONAL ). "#EC CI_STDSEQ
+            " check curr plan not equal to cc curr
+            IF <memo>-dispw = <memo>-waers.
+              lr_idenr = VALUE #( BASE lr_idenr
+                                  ( sign = gc_i option = gc_eq low = <memo>-idenr ) ).
+            ENDIF.
+            " No amt. in local curr, convert amt. plan
+            IF <memo>-dmshb IS INITIAL.
+              <memo>-dmshb = convert_to_eur( iv_date = <memo>-avdat iv_curr = <memo>-dispw iv_amt = <memo>-wrshb ).
+            ENDIF.
+          ENDLOOP.
+        ENDIF.
+
+        IF lr_idenr IS NOT INITIAL.
+          DELETE gt_memo_data WHERE idenr IN lr_idenr.   "#EC CI_STDSEQ
+        ENDIF.
+      ENDMETHOD.
+
+      METHOD build_tab.
+        "Local Data Declarations
+        DATA: lv_timestamp TYPE string,
+              lv_model     TYPE zde_model,
+              lv_source    TYPE fxm_datasource,
+              ls_gl        TYPE ty_gl,
+              ls_fica      TYPE fkk_abs_items,
+              ls_memo      TYPE ty_memo.
+
+        "Looping over the GL Data to get final Snapshot data
+        IF gt_gl_data IS NOT INITIAL.
+          LOOP AT gt_gl_data INTO ls_gl.
+            "Get Model
+            lv_model  = VALUE #( gt_model[ bs_account = ls_gl-racct ]-model OPTIONAL ). "#EC CI_STDSEQ
+            "get the Data source
+            lv_source = VALUE #( gt_kf_def[ kf = VALUE #( gt_kf_sel[ low = ls_gl-racct ]-kf OPTIONAL ) ]-datasource OPTIONAL ). "#EC CI_STDSEQ
+            IF ls_gl-awtyp = gc_fkksu.
+              "Check Reconciliation Key and Summary of the record
+*             IF line_exists( gt_abs_items[ fikey = ls_gl-awref+0(10) && ls_gl-aworg+0(2)                                "(-) of JIRA: FSFXBAM-601
+              IF line_exists( gt_abs_items[ fikey  = |{ ls_gl-awref+0(10) WIDTH = 10 ALIGN = LEFT }{ ls_gl-aworg+0(2) }| "(+) of JIRA: FSFXBAM-601
+                                            sumsz = CONV sumsz_kk( ls_gl-xref1 ) ] ). "#EC CI_STDSEQ
+
+                LOOP AT gt_abs_items INTO ls_fica
+*                                    WHERE ( fikey = ls_gl-awref+0(10) && ls_gl-aworg+0(2)                               "(-) of JIRA: FSFXBAM-601
+                                     WHERE ( fikey = |{ ls_gl-awref+0(10) WIDTH = 10 ALIGN = LEFT }{ ls_gl-aworg+0(2) }| "(+) of JIRA: FSFXBAM-601
+                                             AND sumsz = CONV sumsz_kk( ls_gl-xref1 ) ). "#EC CI_STDSEQ
+                  APPEND VALUE #(
+                    guid        = guid( )
+                    bukrs       = ls_gl-rbukrs
+                    gjahr       = ls_gl-gjahr
+                    belnr       = ls_gl-belnr
+                    docln       = ls_gl-docln
+                    timestamp   = ls_gl-timestamp
+                    fica_opbel  = ls_fica-opbel
+                    model       = lv_model
+                    "call method to get the category
+                    category    = get_snapshot_category( rs_gl      = ls_gl
+                                                         rs_fica    = ls_fica
+                                                         rs_memo    = ls_memo
+                                                         iv_model   = lv_model
+                                                         iv_source  = lv_source )
+                    racct       = ls_gl-racct
+                    rtcur       = ls_fica-pswsl
+                    tsl         = CONV fins_vwcur12( |{ ls_fica-pswbt CURRENCY = ls_fica-pswsl }| )
+                    rwcur       = ls_fica-waers
+                    wsl         = CONV fins_vwcur12( |{ ls_fica-betrw CURRENCY = ls_fica-waers }| )
+                    rhcur       = ls_fica-hwaer
+                    hsl         = CONV fins_vwcur12( |{ ls_fica-betrh CURRENCY = ls_fica-hwaer }| )
+                    budat       = ls_gl-budat
+                    sgtxt       = ls_gl-sgtxt
+                    zuonr       = ls_gl-zuonr
+                    blart       = ls_gl-blart
+                    gkont       = ls_gl-gkont
+                    datasource  = lv_source
+                    fica_flag   = abap_true
+                    fica_augbl  = ls_fica-augbl
+                    fica_blart  = VALUE #( gt_fica_data[ opbel = ls_fica-opbel ]-blart OPTIONAL )
+                    fica_ernam  = VALUE #( gt_fica_data[ opbel = ls_fica-opbel ]-ernam OPTIONAL )
+                    fica_hvorg  = VALUE #( gt_fica_data[ opbel = ls_fica-opbel ]-hvorg OPTIONAL )
+                    fica_tvorg  = VALUE #( gt_fica_data[ opbel = ls_fica-opbel ]-tvorg OPTIONAL )
+                  ) TO gt_snapshot_tab.                  "#EC CI_STDSEQ
+
+                  CLEAR ls_fica.
+                ENDLOOP.
+              ELSE.
+                APPEND VALUE #(
+                  guid            = guid( )
+                  bukrs           = ls_gl-rbukrs
+                  gjahr           = ls_gl-gjahr
+                  belnr           = ls_gl-belnr
+                  docln           = ls_gl-docln
+                  timestamp       = ls_gl-timestamp
+                  model           = lv_model
+                  category        = get_snapshot_category( rs_gl      = ls_gl
+                                                           rs_fica    = ls_fica
+                                                           rs_memo    = ls_memo
+                                                           iv_model   = lv_model
+                                                           iv_source  = lv_source )
+                  racct           = ls_gl-racct
+                  rtcur           = COND #( WHEN ls_gl-rtcur = ls_gl-rhcur
+                                             AND ls_gl-rwcur <> ls_gl-rhcur
+                                            THEN ls_gl-rwcur
+                                            ELSE ls_gl-rtcur )
+                  tsl             = COND #( WHEN ls_gl-rtcur = ls_gl-rhcur
+                                             AND ls_gl-rwcur <> ls_gl-rhcur
+                                            THEN CONV fins_vwcur12( |{ ls_gl-wsl CURRENCY = ls_gl-rwcur }| ) "BOC of JIRA: FSFXBAM-348
+                                            ELSE CONV fins_vwcur12( |{ ls_gl-tsl CURRENCY = ls_gl-rtcur }| ) )
+                  rwcur           = ls_gl-rwcur
+                  wsl             = CONV fins_vwcur12( |{ ls_gl-wsl CURRENCY = ls_gl-rwcur }| )
+                  rhcur           = ls_gl-rhcur
+                  hsl             = CONV fins_vwcur12( |{ ls_gl-hsl CURRENCY = ls_gl-rhcur }| )
+                  budat           = ls_gl-budat
+                  sgtxt           = ls_gl-sgtxt
+                  zuonr           = ls_gl-zuonr
+                  blart           = ls_gl-blart
+                  gkont           = ls_gl-gkont
+                  datasource      = lv_source
+                  fica_flag       = abap_true
+                ) TO gt_snapshot_tab.                    "#EC CI_STDSEQ
+              ENDIF.
+            ELSE.
+              APPEND VALUE #(
+                guid            = guid( )
+                bukrs           = ls_gl-rbukrs
+                gjahr           = ls_gl-gjahr
+                belnr           = ls_gl-belnr
+                docln           = ls_gl-docln
+                timestamp       = ls_gl-timestamp
+                model           = lv_model
+                category        = get_snapshot_category( rs_gl      = ls_gl
+                                                         rs_fica    = ls_fica
+                                                         rs_memo    = ls_memo
+                                                         iv_model   = lv_model
+                                                         iv_source  = lv_source )
+                racct           = ls_gl-racct
+                rtcur           = COND #( WHEN ls_gl-rtcur = ls_gl-rhcur
+                                           AND ls_gl-rwcur <> ls_gl-rhcur
+                                          THEN ls_gl-rwcur
+                                          ELSE ls_gl-rtcur )
+                tsl             = COND #( WHEN ls_gl-rtcur = ls_gl-rhcur
+                                           AND ls_gl-rwcur <> ls_gl-rhcur
+                                          THEN CONV fins_vwcur12( |{ ls_gl-wsl CURRENCY = ls_gl-rwcur }| ) "BOC of JIRA: FSFXBAM-348
+                                          ELSE CONV fins_vwcur12( |{ ls_gl-tsl CURRENCY = ls_gl-rtcur }| ) )
+                rwcur           = ls_gl-rwcur
+                wsl             = CONV fins_vwcur12( |{ ls_gl-wsl CURRENCY = ls_gl-rwcur }| )
+                rhcur           = ls_gl-rhcur
+                hsl             = CONV fins_vwcur12( |{ ls_gl-hsl CURRENCY = ls_gl-rhcur }| )
+                budat           = ls_gl-budat
+                sgtxt           = ls_gl-sgtxt
+                zuonr           = ls_gl-zuonr
+                blart           = ls_gl-blart
+                gkont           = ls_gl-gkont
+                datasource      = lv_source
+              ) TO gt_snapshot_tab.                      "#EC CI_STDSEQ
+            ENDIF.
+            CLEAR: lv_model, lv_source, ls_gl.
+          ENDLOOP.
+        ENDIF.
+
+        IF gt_memo_data IS NOT INITIAL.
+          LOOP AT gt_memo_data INTO ls_memo.
+
+            lv_model = COND #( WHEN ls_memo-bnkko IS INITIAL AND ls_memo-ebene = 'GU'
+                                THEN VALUE #( gt_model[ bs_account = 'GUSTAV' ]-model OPTIONAL )
+                               WHEN ls_memo-bnkko IS INITIAL AND ls_memo-ebene = 'GT'
+                                THEN VALUE #( gt_model[ bs_account = 'GUSTAV_TBI' ]-model OPTIONAL )
+                               ELSE
+                                VALUE #( gt_model[ bs_account = ls_memo-bnkko ]-model OPTIONAL ) ). "#EC CI_STDSEQ
+            lv_source = VALUE #( gt_kf_def[ kf = gc_oneexp ]-datasource OPTIONAL ). "#EC CI_STDSEQ
+            lv_timestamp = |{ ls_memo-timestamp TIMESTAMP = USER TIMEZONE = gc_tzone }|. "#EC CI_STDSEQ
+
+            " B.O.C VKANDASAMY FSFXBAM-426
+            DATA(lv_doc) = |{ condense( val = ls_memo-idenr del = '0' ) && '999' WIDTH = 10 ALIGN = RIGHT PAD = '0' }|.
+            DATA(lv_timestmp) = CONV timestamp( |{ ls_memo-avdat }000000| ).
+            " E.O.C VKANDASAMY FSFXBAM-426
+
+            APPEND VALUE #(
+              guid            = guid( )
+              bukrs           = ls_memo-bukrs
+              gjahr           = lv_timestamp+6(4)
+              belnr           = ls_memo-idenr
+              docln           = ls_memo-idenr+4(6)
+              timestamp       = ls_memo-timestamp
+              model           = lv_model
+              category        = get_snapshot_category( rs_gl      = ls_gl
+                                                       rs_fica    = ls_fica
+                                                       rs_memo    = ls_memo
+                                                       iv_model   = lv_model
+                                                       iv_source  = lv_source )
+              racct           = ls_memo-bnkko
+              rtcur           = ls_memo-dispw
+              tsl             = CONV fins_vwcur12( |{ ls_memo-wrshb CURRENCY = ls_memo-dispw }| )
+              rhcur           = ls_memo-waers
+              hsl             = CONV fins_vwcur12( |{ ls_memo-dmshb CURRENCY = ls_memo-waers }| )
+              budat           = ls_memo-hzdat
+              datasource      = lv_source
+              cert_lvl        = ls_memo-cert_level
+              plan_lvl        = ls_memo-ebene
+              avdat           = ls_memo-avdat
+              zuonr           = ls_memo-merkm
+            ) TO gt_snapshot_tab.                        "#EC CI_STDSEQ
+
+            " B.O.C VKANDASAMY FSFXBAM-426
+            APPEND VALUE #(
+              guid            = guid( )
+              bukrs           = ls_memo-bukrs
+              gjahr           = lv_timestamp+6(4)
+              belnr           = lv_doc
+              docln           = ls_memo-idenr+4(6)
+              timestamp       = lv_timestmp
+              model           = lv_model
+              category        = get_snapshot_category( rs_gl      = ls_gl
+                                                       rs_fica    = ls_fica
+                                                       rs_memo    = ls_memo
+                                                       iv_model   = lv_model
+                                                       iv_source  = lv_source )
+              racct           = ls_memo-bnkko
+              rtcur           = ls_memo-dispw
+              tsl             = CONV fins_vwcur12( |{ ls_memo-wrshb CURRENCY = ls_memo-dispw }| ) * -1
+              rhcur           = ls_memo-waers
+              hsl             = CONV fins_vwcur12( |{ ls_memo-dmshb * -1 CURRENCY = ls_memo-waers }| )
+              budat           = ls_memo-avdat + 1
+              datasource      = lv_source
+              cert_lvl        = ls_memo-cert_level
+              plan_lvl        = ls_memo-ebene
+              avdat           = ls_memo-avdat + 1
+              zuonr           = ls_memo-merkm
+            ) TO gt_snapshot_tab.                        "#EC CI_STDSEQ
+            " E.O.C VKANDASAMY FSFXBAM-426
+
+            CLEAR ls_memo.
+          ENDLOOP.
+        ENDIF.
+      ENDMETHOD.
+
+      METHOD delete_snapshot_comparison.
+
+        SELECT a~*
+          FROM ztr_fx_snapshot AS a
+          INNER JOIN @gt_snapshot_tab AS b
+          ON  a~bukrs      = b~bukrs
+          AND a~gjahr      = b~gjahr
+          AND a~belnr      = b~belnr
+          AND a~fica_opbel = b~fica_opbel
+          AND a~fica_augbl = b~fica_augbl
+          AND a~docln      = b~docln
+          AND a~timestamp  = b~timestamp
+        INTO TABLE @DATA(lt_old).
+
+*BOC of JIRA: FSFXBAM-601
+*        IF sy-subrc EQ 0.
+*          CALL FUNCTION 'ENQUEUE_EZ_TR_SNAPSHOT'
+*            EXPORTING
+*              mode_ztr_fx_snapshot = 'X'
+*              mandt                = sy-mandt
+*              _wait                = abap_true
+*            EXCEPTIONS
+*              foreign_lock         = 1
+*              system_failure       = 2
+*              OTHERS               = 3.
+*          IF sy-subrc = 0.
+*            DELETE ztr_fx_snapshot FROM TABLE lt_old.
+*            IF sy-subrc = 0.
+*              COMMIT WORK.
+*              MESSAGE TEXT-s02 TYPE gc_s.
+*            ENDIF.
+*
+*            CALL FUNCTION 'DEQUEUE_EZ_TR_SNAPSHOT'
+*              EXPORTING
+*                mode_ztr_fx_snapshot = 'X'
+*                mandt                = sy-mandt.
+*          ELSE.
+*            MESSAGE TEXT-e01 TYPE gc_s.
+*          ENDIF.
+*        ENDIF.
+*BOC of JIRA: FSFXBAM-601
+      ENDMETHOD.
+
+      METHOD update_snapshot_comparison.
+        "BOC JIRA: FSFXBAM-601 465794779093
+        DATA(lv_records) = lines( gt_snapshot_tab ).
+        CLEAR gt_results.
+        IF cb_par = abap_true AND gv_sim = abap_true.
+          APPEND VALUE #( records = lv_records status = gc_s message = TEXT-s01 ) TO gt_results.
+        ENDIF.
+        "EOC JIRA: FSFXBAM-601 465794779093
+
+        CHECK gt_snapshot_tab IS NOT INITIAL
+          AND gv_sim IS INITIAL.
+
+
+        delete_snapshot_comparison( ).
+
+        CALL FUNCTION 'ENQUEUE_EZ_TR_SNAPSHOT'
+          EXPORTING
+            mode_ztr_fx_snapshot = 'X'
+            mandt                = sy-mandt
+            _wait                = abap_true
+          EXCEPTIONS
+            foreign_lock         = 1
+            system_failure       = 2
+            OTHERS               = 3.
+        IF sy-subrc = 0.
+          MODIFY ztr_fx_snapshot FROM TABLE gt_snapshot_tab.
+          IF sy-subrc = 0.
+            COMMIT WORK.
+*BOC of JIRA: FSFXBAM-601 465794779093
+            APPEND VALUE #( records = lv_records status = gc_s message = TEXT-s01 ) TO gt_results.
+*EOC of JIRA: FSFXBAM-601 465794779093
+            MESSAGE TEXT-s01 TYPE gc_s.
+          ENDIF.
+
+          CALL FUNCTION 'DEQUEUE_EZ_TR_SNAPSHOT'
+            EXPORTING
+              mode_ztr_fx_snapshot = 'X'
+              mandt                = sy-mandt.
+
+        ELSE.
+          "BOC of JIRA: FSFXBAM-601 465794779093
+          APPEND VALUE #( records = 0 status = gc_s message = TEXT-e02 ) TO gt_results.
+          "EOC of JIRA: FSFXBAM-601 465794779093
+          MESSAGE TEXT-e02 TYPE gc_s.
+        ENDIF.
+        "BOC of JIRA: FSFXBAM-601 465794779093
+        REFRESH gt_snapshot_tab.
+        "EOC of JIRA: FSFXBAM-601 465794779093
+      ENDMETHOD.
+
+      METHOD convert_to_eur.
+        DATA: lv_local_amount TYPE fins_vwcur12.
+
+        CALL FUNCTION 'CONVERT_TO_LOCAL_CURRENCY'
+          EXPORTING
+            date             = iv_date
+            foreign_amount   = iv_amt
+            foreign_currency = iv_curr
+            local_currency   = 'EUR'
+          IMPORTING
+            local_amount     = lv_local_amount
+          EXCEPTIONS
+            no_rate_found    = 1
+            overflow         = 2
+            no_factors_found = 3
+            no_spread_found  = 4
+            OTHERS           = 5.
+
+        IF sy-subrc = 0.
+          rv_tot_eur = lv_local_amount.
+        ENDIF.
+      ENDMETHOD.
+
+      METHOD get_snapshot_category.
+        "Local Data Declaration
+        CONSTANTS:lv_function_id TYPE if_fdt_types=>id VALUE '0A7425B8447B1FE0B08FD69C9F39A8EE'.
+        DATA:lv_timestamp          TYPE timestamp,
+             lt_name_value         TYPE abap_parmbind_tab,
+             ls_name_value         TYPE abap_parmbind,
+             lr_data               TYPE REF TO data,
+             lx_fdt                TYPE REF TO cx_fdt,
+             la_model              TYPE if_fdt_types=>element_text,
+             la_source             TYPE if_fdt_types=>element_text,
+             la_blart              TYPE if_fdt_types=>element_text,
+             la_sgtxt              TYPE if_fdt_types=>element_text,
+             la_gkont              TYPE if_fdt_types=>element_text,
+             la_racct              TYPE if_fdt_types=>element_text,
+             la_budat              TYPE if_fdt_types=>element_timepoint,
+             la_rwcur              TYPE if_fdt_types=>element_text,
+             la_fica_username      TYPE if_fdt_types=>element_text,
+             la_fica_doc_type      TYPE if_fdt_types=>element_text,
+             la_planning_level     TYPE if_fdt_types=>element_text,
+             la_certainty_level    TYPE if_fdt_types=>element_text,
+             la_fica_flag          TYPE if_fdt_types=>element_boolean,
+             la_zuonr              TYPE if_fdt_types=>element_text,
+             la_budat_is_month_end TYPE if_fdt_types=>element_boolean,
+             la_shkzg              TYPE if_fdt_types=>element_text,
+             la_stream             TYPE if_fdt_types=>element_text,     "(+) of JIRA: FSFXBAM-601 Stream characteristic
+             la_ic_operation       TYPE if_fdt_types=>element_boolean,  "(+) of JIRA: FSFXBAM-601 IC Operation Type Characteristic
+             la_category           TYPE seqnr.
+
+        GET TIME STAMP FIELD lv_timestamp.
+
+        "Get the model
+        ls_name_value-name = 'MODEL'.
+        la_model = iv_model.
+        GET REFERENCE OF la_model INTO lr_data.
+        ls_name_value-value = lr_data.
+        INSERT ls_name_value INTO TABLE lt_name_value.
+        CLEAR ls_name_value.
+
+        ls_name_value-name = 'SOURCE'.
+        la_source = iv_source.
+        GET REFERENCE OF la_source INTO lr_data.
+        ls_name_value-value = lr_data.
+        INSERT ls_name_value INTO TABLE lt_name_value.
+        CLEAR ls_name_value.
+
+        ls_name_value-name = 'BLART'.
+        la_blart = rs_gl-blart.
+        GET REFERENCE OF la_blart INTO lr_data.
+        ls_name_value-value = lr_data.
+        INSERT ls_name_value INTO TABLE lt_name_value.
+        CLEAR ls_name_value.
+
+        ls_name_value-name = 'SGTXT'.
+        la_sgtxt = rs_gl-sgtxt.
+        GET REFERENCE OF la_sgtxt INTO lr_data.
+        ls_name_value-value = lr_data.
+        INSERT ls_name_value INTO TABLE lt_name_value.
+        CLEAR ls_name_value.
+
+        ls_name_value-name = 'GKONT'.
+        la_gkont = rs_gl-gkont.
+        GET REFERENCE OF la_gkont INTO lr_data.
+        ls_name_value-value = lr_data.
+        INSERT ls_name_value INTO TABLE lt_name_value.
+        CLEAR ls_name_value.
+
+        ls_name_value-name = 'RACCT'.
+        la_racct = COND #( WHEN iv_source = 'EXP_HUB'
+                           THEN rs_memo-bnkko
+                           WHEN rs_gl-awtyp = gc_fkksu  "(+) of JIRA: FSFXBAM-601 When reference is fkksu
+                           THEN rs_fica-hkont           "(+) of JIRA: FSFXBAM-601 Then GL account
+                           ELSE rs_gl-racct ).
+        GET REFERENCE OF la_racct INTO lr_data.
+        ls_name_value-value = lr_data.
+        INSERT ls_name_value INTO TABLE lt_name_value.
+        CLEAR ls_name_value.
+
+        ls_name_value-name = 'BUDAT'.
+        la_budat-type = 'D'.
+        la_budat-date = rs_gl-budat.
+        GET REFERENCE OF la_budat INTO lr_data.
+        ls_name_value-value = lr_data.
+        INSERT ls_name_value INTO TABLE lt_name_value.
+        CLEAR ls_name_value.
+
+        ls_name_value-name = 'RWCUR'.
+        la_rwcur = COND #( WHEN iv_source = 'EXP_HUB'
+                           THEN rs_memo-dispw
+                           ELSE rs_gl-rwcur ).
+        GET REFERENCE OF la_rwcur INTO lr_data.
+        ls_name_value-value = lr_data.
+        INSERT ls_name_value INTO TABLE lt_name_value.
+        CLEAR ls_name_value.
+
+        ls_name_value-name = 'FICA_USERNAME'.
+        "Get the created user name by passing the Document Number
+        la_fica_username = VALUE #( gt_fica_data[ opbel = rs_fica-opbel ]-ernam OPTIONAL ). "#EC CI_STDSEQ
+        GET REFERENCE OF la_fica_username INTO lr_data.
+        ls_name_value-value = lr_data.
+        INSERT ls_name_value INTO TABLE lt_name_value.
+        CLEAR ls_name_value.
+
+        ls_name_value-name = 'FICA_DOC_TYPE'.
+        "Get the Document type by passing the Document Number
+        la_fica_doc_type = COND #( WHEN rs_gl-awtyp = gc_fkksu
+                                   THEN VALUE #( gt_fica_data[ opbel = rs_fica-opbel ]-blart OPTIONAL )     "(+) of JIRA: FSFXBAM-601, fkkssu docs get blart from gt_fica_data
+                                   ELSE space ).                                                            "(+) of JIRA: FSFXBAM-601, else space
+*    la_fica_doc_type = VALUE #( gt_fica_data[ opbel = rs_fica-opbel ]-blart OPTIONAL ). "#EC CI_STDSEQ     "(-) of JIRA: FSFXBAM-601, 8/18/26, moved above
+        GET REFERENCE OF la_fica_doc_type INTO lr_data.
+        ls_name_value-value = lr_data.
+        INSERT ls_name_value INTO TABLE lt_name_value.
+        CLEAR ls_name_value.
+
+        ls_name_value-name = 'ZUONR'.
+        la_zuonr = COND #( WHEN iv_source = 'EXP_HUB'
+                           THEN rs_memo-merkm
+                           ELSE rs_gl-zuonr ).
+        GET REFERENCE OF la_zuonr INTO lr_data.
+        ls_name_value-value = lr_data.
+        INSERT ls_name_value INTO TABLE lt_name_value.
+        CLEAR ls_name_value.
+
+        ls_name_value-name = 'PLANNING_LEVEL'.
+        la_planning_level = rs_memo-ebene.
+        GET REFERENCE OF la_planning_level INTO lr_data.
+        ls_name_value-value = lr_data.
+        INSERT ls_name_value INTO TABLE lt_name_value.
+        CLEAR ls_name_value.
+
+        ls_name_value-name = 'CERTAINTY_LEVEL'.
+        la_certainty_level = rs_memo-cert_level.
+        GET REFERENCE OF la_certainty_level INTO lr_data.
+        ls_name_value-value = lr_data.
+        INSERT ls_name_value INTO TABLE lt_name_value.
+        CLEAR ls_name_value.
+
+        ls_name_value-name = 'FICA_FLAG'.
+        "Check if the Reference procedure is 'FKKSU'
+        la_fica_flag = COND #( WHEN rs_gl-awtyp = gc_fkksu THEN abap_true ).
+        GET REFERENCE OF la_fica_flag INTO lr_data.
+        ls_name_value-value = lr_data.
+        INSERT ls_name_value INTO TABLE lt_name_value.
+        CLEAR ls_name_value.
+
+        ls_name_value-name = 'BUDAT_IS_MONTH_END'.
+        "Check if the document date is falls under month end
+        la_budat_is_month_end = is_month_end( rs_gl-budat ).
+        GET REFERENCE OF la_budat_is_month_end INTO lr_data.
+        ls_name_value-value = lr_data.
+        INSERT ls_name_value INTO TABLE lt_name_value.
+        CLEAR ls_name_value.
+
+        ls_name_value-name = 'SHKZG'.
+        la_shkzg = COND #( WHEN iv_source = 'EXP_HUB'
+                            AND rs_memo-wrshb > 0
+                           THEN 'S'
+                           ELSE rs_gl-drcrk ).
+        GET REFERENCE OF la_shkzg INTO lr_data.
+        ls_name_value-value = lr_data.
+        INSERT ls_name_value INTO TABLE lt_name_value.
+        CLEAR ls_name_value.
+
+
+        "BOC of JIRA: FSFXBAM-601
+        "Set STREAM to BHFS if company code is in gt_tvarvc_bhfs, else BV
+        ls_name_value-name = 'STREAM'.
+        la_stream = COND #( WHEN line_exists( gt_tvarvc_bhfs[ low = rs_gl-rbukrs ] )
+                            THEN 'BHFS'
+                            ELSE 'BV' ).
+        GET REFERENCE OF la_stream INTO lr_data.
+        ls_name_value-value = lr_data.
+        INSERT ls_name_value INTO TABLE lt_name_value.
+        CLEAR ls_name_value.
+
+        "Set IC_OPERATION_TYPE to abap_true if doc rs_fica-opbel is in gt_fica_ic
+        ls_name_value-name = 'IC_OPERATION'.
+        la_ic_operation = COND #( WHEN line_exists( gt_fica_ic[ opbel = rs_fica-opbel ] )
+                                       THEN abap_true ).
+        GET REFERENCE OF la_ic_operation INTO lr_data.
+        ls_name_value-value = lr_data.
+        INSERT ls_name_value INTO TABLE lt_name_value.
+        CLEAR ls_name_value.
+        "EOC of JIRA: FSFXBAM-601 465794779093
+
+        TRY.
+            cl_fdt_function_process=>process( EXPORTING iv_function_id = lv_function_id
+                                                        iv_timestamp   = lv_timestamp
+                                              IMPORTING ea_result      = la_category
+                                              CHANGING  ct_name_value  = lt_name_value ).
+*          CATCH cx_fdt INTO lx_fdt.                     "#EC NO_HANDLER
+*BOC of JIRA: FSFXBAM-601 handle exception
+          CATCH cx_fdt INTO lx_fdt.
+            DATA(lv_err_text) = lx_fdt->get_text( ).
+            APPEND |{ rs_gl-rbukrs }/{ rs_gl-gjahr }/{ rs_gl-belnr }: { lv_err_text }| TO gt_brf_err ##NO_TEXT.
+            CLEAR la_category.
+*BOC of JIRA: FSFXBAM-601
+        ENDTRY.
+
+        rv_category = la_category.
+      ENDMETHOD.
+
+      METHOD is_month_end.
+        DATA: lv_first_next TYPE d,
+              lv_last_day   TYPE d.
+
+        lv_first_next = iv_budat(6) && '01'.
+        lv_first_next = lv_first_next + 32.
+        lv_first_next = lv_first_next(6) && '01'.
+
+        lv_last_day = lv_first_next - 1.
+
+        rv_is_month_end = COND #( WHEN iv_budat = lv_last_day
+                                  THEN abap_true
+                                  ELSE abap_false ).
+      ENDMETHOD.
+      METHOD guid.
+        TRY.
+            rv_guid = cl_system_uuid=>create_uuid_x16_static( ).
+          CATCH cx_uuid_error INTO DATA(lx).
+            MESSAGE lx->get_text( ) TYPE gc_e.
+        ENDTRY.
+      ENDMETHOD.
+
+
+      "BOC of JIRA: FSFXBAM-601 465794779093
+      METHOD run_parallel.
+
+        DATA:
+          lt_gl_temp TYPE tt_data,
+          lt_gl_data TYPE tt_data.
+        DATA: lv_buffer     TYPE xstring,
+              lv_buffer_all TYPE xstring,
+              lt_in_tab     TYPE STANDARD TABLE OF xstring,
+              lv_cursor     TYPE cursor,
+              ls_attrib     TYPE ty_attrib.
+
+
+
+        init_context(
+          i_datefr = i_datefr
+          i_timefr = i_timefr
+          i_dateto = i_dateto
+          i_timeto = i_timeto
+          i_sim    = i_sim ).
+
+        get_kf_selections( ).
+        get_latest_snapshot_timestamp( ).
+
+        REFRESH lt_gl_data[].
+
+        CLEAR gv_cnt.
+        CLEAR lt_in_tab.
+
+        SELECT
+          b~rbukrs,
+          b~timestamp,
+          b~drcrk,
+          b~rtcur,
+          b~tsl,
+          b~rwcur,
+          b~wsl,
+          b~rhcur,
+          b~hsl,
+          b~budat,
+          b~blart,
+          b~racct,
+          b~belnr,
+          b~gjahr,
+          b~sgtxt,
+          b~gkont,
+          b~awtyp,
+          b~docln,
+          b~awref,
+          b~aworg,
+          b~zuonr,
+          c~xref1
+          FROM acdoca AS b
+          LEFT OUTER JOIN bseg AS c
+             ON c~bukrs = b~rbukrs
+            AND c~belnr = b~belnr
+            AND c~gjahr = b~gjahr
+            AND c~hkont = b~racct
+            AND lpad( c~buzei,6, '0' ) = b~docln
+          WHERE b~rldnr     = '0L'
+            AND b~timestamp IN @gr_timestamp
+            AND ( b~rtcur <> b~rhcur
+             OR b~rwcur   <> b~rhcur )
+*        AND b~budat   <= @sy-datum  "(-) of JIRA: FSFXBAM-348
+            AND b~tsl     <> 0
+            AND b~blart   IN @gr_blart_incl
+            INTO TABLE @lt_gl_temp PACKAGE SIZE @p_cursor.
+
+
+          SORT lt_gl_temp BY rbukrs ASCENDING timestamp ASCENDING  .
+          DELETE lt_gl_temp WHERE blart NOT IN gr_blart_excl. "#EC CI_STDSEQ
+
+          LOOP AT lt_gl_temp ASSIGNING FIELD-SYMBOL(<lfs_temp>).
+
+            IF <lfs_temp>-rtcur <> <lfs_temp>-rhcur
+              AND <lfs_temp>-racct IN gr_racct.
+              lt_gl_data = VALUE #( BASE lt_gl_data ( <lfs_temp> ) ).
+            ENDIF.
+
+            IF <lfs_temp>-rwcur <> <lfs_temp>-rhcur.
+              IF line_exists( gt_skb1[ bukrs = <lfs_temp>-rbukrs saknr = <lfs_temp>-racct ] ).
+                lt_gl_data = VALUE #( BASE lt_gl_data ( <lfs_temp> ) ).
+              ENDIF.
+            ENDIF.
+          ENDLOOP.
+
+
+        ENDSELECT.
+
+*        SORT lt_gl_data.
+        SORT lt_gl_data BY rbukrs timestamp. "(+) of JIRA:FSFXBAM-601
+
+        LOOP AT lt_gl_data INTO DATA(ls_record)
+        GROUP BY ( sy-tabix - 1 ) DIV p_batch + 1 INTO DATA(lv_group).
+
+          DATA(lt_task_batch) = VALUE tt_data( FOR ls IN GROUP lv_group ( ls ) ).
+          IF lt_task_batch IS NOT INITIAL.
+            DATA(ls_task_input) = VALUE ty_task_input( gldata_sel = lt_task_batch ).
+            EXPORT task_data = ls_task_input TO DATA BUFFER lv_buffer.
+            APPEND lv_buffer TO lt_in_tab.
+            CLEAR lv_buffer.
+          ENDIF.
+        ENDLOOP.
+        CLEAR lt_gl_data.
+
+        CLEAR ls_attrib.
+        ls_attrib-datefr = gv_datefr .
+        ls_attrib-timefr = gv_timefr .
+        ls_attrib-dateto = gv_dateto .
+        ls_attrib-timeto = gv_timeto .
+        ls_attrib-sim = gv_sim   .
+
+        EXPORT task_data_all = ls_attrib TO DATA BUFFER lv_buffer_all.
+
+
+        IF lt_in_tab IS NOT INITIAL.
+          DATA(lo_parallel) = NEW lcl_parallel_processor(
+            p_local_server  = abap_false
+            p_num_processes = p_num
+            p_percentage    = p_perc
+          ).
+          lo_parallel->gv_sim = gv_sim.
+          lo_parallel->gv_par = gv_par.
+
+
+          lo_parallel->run(
+            EXPORTING
+              p_in_tab  = lt_in_tab
+              p_debug   = i_sim
+              p_in_all  = lv_buffer_all
+            IMPORTING
+              p_out_tab = DATA(results)
+          ).
+
+          lo_parallel->handle_results(
+            EXPORTING
+              p_all_results = results
+          ).
+
+        ENDIF.
+        "exit the loop if result is already less than packet size.
+
+        CLEAR : lt_gl_data,
+                results.
+
+
+
+      ENDMETHOD.
+      METHOD run_proc_parallel.
+        "running the whole process w/o the main data selection
+        CLEAR gt_snapshot_tab.
+        init_context(
+          i_datefr = gs_attrib-datefr
+          i_timefr = gs_attrib-timefr
+          i_dateto = gs_attrib-dateto
+          i_timeto = gs_attrib-timeto
+          i_sim    = gs_attrib-sim ).
+
+        get_kf_selections( ).
+        get_latest_snapshot_timestamp( ).
+        get_fica_data( ).
+        get_memo_data( ).
+        build_tab( ).
+        update_snapshot_comparison( ).
+      ENDMETHOD.
+
+      "EOC of JIRA: FSFXBAM-601 465794779093
+
+
+    ENDCLASS.
+
+    "BOC of JIRA: FSFXBAM-601 797789148215
+*--------------------------------------------------------------------------*
+*       CLASS lcl_parallel_processor IMPLEMENTATION
+*--------------------------------------------------------------------------*
+    CLASS lcl_parallel_processor IMPLEMENTATION.
+
+      METHOD do.
+        DATA:
+          ls_task_input TYPE ty_task_input,
+          lt_gldata_sel TYPE tt_data,
+          ls_attrib     TYPE ty_attrib.
+        TRY.
+            IMPORT task_data = ls_task_input FROM DATA BUFFER p_in.
+            IMPORT task_data_all = ls_attrib FROM DATA BUFFER p_in_all.
+          CATCH cx_sy_import_mismatch_error.
+
+            RETURN.
+
+
+        ENDTRY.
+
+        IF ls_task_input-gldata_sel IS INITIAL.
+          RETURN.
+        ENDIF.
+
+        lt_gldata_sel = ls_task_input-gldata_sel.
+        DATA(lo_main) = NEW lcl_main(  ).
+        IF lo_main IS BOUND.
+          "setting up imported data values
+          lo_main->gt_gl_data = lt_gldata_sel.
+          lo_main->gs_attrib  = ls_attrib.
+          lo_main->run_proc_parallel( ).
+        ENDIF.
+        EXPORT results = gt_results TO DATA BUFFER p_out.
+
+      ENDMETHOD.
+
+      METHOD handle_results.
+
+        DATA: lt_task_results TYPE tt_task_result,
+              ls_doc_result   TYPE ty_task_result.
+
+
+        LOOP AT p_all_results INTO DATA(ls_task_results).
+          IMPORT results = lt_task_results FROM DATA BUFFER ls_task_results-result.
+          ADD 1 TO gv_cnt.
+          LOOP AT lt_task_results INTO ls_doc_result.
+            WRITE:/ |Process: { gv_cnt }: { ls_doc_result-records } Records Updated | ##NO_TEXT.
+          ENDLOOP.
+
+
+        ENDLOOP.
+
+
+
+
+      ENDMETHOD.
+
+    ENDCLASS.
+    "EOC of JIRA: FSFXBAM-601 797789148215
